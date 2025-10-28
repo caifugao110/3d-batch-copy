@@ -11,10 +11,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from tkinter import font
+import webbrowser
+import subprocess
+import platform
 
 # 版本和版权信息
-VERSION = "V1.0.2"
+VERSION = "V1.0.7"
 COPYRIGHT = "Tobin © 2025"
+PROJECT_URL = "https://github.com/caifugao110/3d-batch-copy"
 
 # 全局队列：用于子线程与GUI主线程通信（传递日志和进度）
 log_queue = queue.Queue()
@@ -149,16 +153,26 @@ def build_file_index(source_dirs):
 
 
 def read_original_file_list(list_file):
-    """读取待处理文件列表"""
+    """读取待处理文件列表（仅支持CSV和TXT格式，移除pandas依赖）"""
     try:
-        with open(list_file, "r", encoding="utf-8-sig") as f:
-            reader = csv.reader(f)
-            all_lines = [row[0].strip() for row in reader if row and row[0].strip()]
+        _, ext = os.path.splitext(list_file)
+        ext = ext.lower()
+        
+        if ext == '.csv':
+            with open(list_file, "r", encoding="utf-8-sig") as f:
+                reader = csv.reader(f)
+                all_lines = [row[0].strip() for row in reader if row and row[0].strip()]
+        elif ext == '.txt':
+            with open(list_file, "r", encoding="utf-8-sig") as f:
+                all_lines = [line.strip() for line in f if line.strip()]
+        else:
+            print(f"⚠️ 不支持的文件格式: {ext}，仅支持CSV和TXT文件")
+            return None
         
         print(f"📋 待处理文件数: {len(all_lines)}")
         return all_lines
     except Exception as e:
-        print(f"🔥 CSV 文件读取失败: {str(e)}")
+        print(f"🔥 文件读取失败: {str(e)}")
         print(f"请检查文件是否存在且格式正确: {list_file}")
         return None
 
@@ -321,14 +335,15 @@ class BatchCopyGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"3D文件批量复制工具 {VERSION}")
-        self.geometry("900x650")
+        self.geometry("1000x700")
         self.resizable(True, True)
         self.config_path = None  # 配置文件路径
         self.list_file_path = None  # 原始清单文件路径
         self.config_data = None  # 加载的配置数据
+        self.running = False  # 任务运行状态标志
         
-        # 设置样式
-        self._setup_styles()
+        # 延迟加载样式配置，加快启动速度
+        self.after(100, self._setup_styles)
         
         # 初始化界面组件
         self._init_widgets()
@@ -340,10 +355,10 @@ class BatchCopyGUI(tk.Tk):
         self._listen_queues()
         
         # 尝试自动加载配置文件和原始清单
-        self._auto_load_files()
+        self.after(200, self._auto_load_files)  # 延迟执行，优先显示界面
 
     def _setup_styles(self):
-        """设置界面样式"""
+        """设置界面样式（延迟加载）"""
         self.style = ttk.Style()
         
         # 配置主题
@@ -368,9 +383,15 @@ class BatchCopyGUI(tk.Tk):
         
         # 配置标题标签样式
         self.style.configure('Header.TLabel',
-                            font=('微软雅黑', 12, 'bold'),
+                            font=('微软雅黑', 14, 'bold'),
                             foreground='#2c3e50',
                             padding=8)
+        
+        # 配置链接样式
+        self.style.configure('Link.TLabel',
+                            font=('微软雅黑', 9, 'underline'),
+                            foreground='#3498db',
+                            padding=2)
 
     def _init_widgets(self):
         """初始化GUI组件"""
@@ -382,8 +403,21 @@ class BatchCopyGUI(tk.Tk):
         header_frame = ttk.Frame(main_frame)
         header_frame.pack(fill=tk.X, pady=(0, 15))
         
-        ttk.Label(header_frame, text="3D文件批量复制工具", style='Header.TLabel').pack(side=tk.LEFT)
-        ttk.Label(header_frame, text=f"{COPYRIGHT} | {VERSION}", font=('微软雅黑', 9)).pack(side=tk.RIGHT)
+        title_frame = ttk.Frame(header_frame)
+        title_frame.pack(side=tk.LEFT)
+        
+        ttk.Label(title_frame, text="3D文件批量复制工具", style='Header.TLabel').pack(anchor=tk.W)
+        
+        # 版权和项目地址
+        info_frame = ttk.Frame(title_frame)
+        info_frame.pack(anchor=tk.W, pady=(5, 0))
+        
+        ttk.Label(info_frame, text=f"{COPYRIGHT} | {VERSION}", font=('微软雅黑', 9)).pack(side=tk.LEFT, padx=(0, 15))
+        
+        # 项目地址链接
+        project_link = ttk.Label(info_frame, text="GitHub项目地址", style='Link.TLabel', cursor="hand2")
+        project_link.pack(side=tk.LEFT)
+        project_link.bind("<Button-1>", lambda e: webbrowser.open(PROJECT_URL))
         
         # 2. 文件选择区
         file_frame = ttk.LabelFrame(main_frame, text="文件设置", padding=10)
@@ -393,7 +427,7 @@ class BatchCopyGUI(tk.Tk):
         config_frame = ttk.Frame(file_frame)
         config_frame.pack(fill=tk.X, pady=(0, 8))
         
-        ttk.Label(config_frame, text="配置文件:").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(config_frame, text="📋 配置文件:").pack(side=tk.LEFT, padx=(0, 10))
         
         self.config_path_var = tk.StringVar()
         self.config_entry = ttk.Entry(config_frame, textvariable=self.config_path_var, state='readonly', width=60)
@@ -401,11 +435,11 @@ class BatchCopyGUI(tk.Tk):
         
         ttk.Button(config_frame, text="浏览...", command=self._select_config).pack(side=tk.RIGHT)
         
-        # 原始清单文件选择
+        # 原始清单文件选择（提示支持格式）
         list_frame = ttk.Frame(file_frame)
         list_frame.pack(fill=tk.X)
         
-        ttk.Label(list_frame, text="原始清单:").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(list_frame, text="📄 原始清单:").pack(side=tk.LEFT, padx=(0, 10))
         
         self.list_file_var = tk.StringVar()
         self.list_entry = ttk.Entry(list_frame, textvariable=self.list_file_var, state='readonly', width=60)
@@ -417,26 +451,44 @@ class BatchCopyGUI(tk.Tk):
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=(0, 15))
         
+        # 左侧按钮组
+        left_btn_frame = ttk.Frame(btn_frame)
+        left_btn_frame.pack(side=tk.LEFT)
+        
         self.start_btn = ttk.Button(
-            btn_frame, text="开始批量复制", command=self._start_process, state=tk.DISABLED
+            left_btn_frame, text="🚀 开始批量复制", command=self._start_process, state=tk.DISABLED
         )
         self.start_btn.pack(side=tk.LEFT, padx=5)
         
+        self.edit_config_btn = ttk.Button(
+            left_btn_frame, text="⚙️ 编辑配置", command=self._edit_config
+        )
+        self.edit_config_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.open_target_btn = ttk.Button(
+            left_btn_frame, text="📂 打开目标目录", command=self._open_target_dir, state=tk.DISABLED
+        )
+        self.open_target_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 右侧按钮组
+        right_btn_frame = ttk.Frame(btn_frame)
+        right_btn_frame.pack(side=tk.RIGHT)
+        
         self.view_log_btn = ttk.Button(
-            btn_frame, text="查看日志文件", command=self._view_log, state=tk.DISABLED
+            right_btn_frame, text="📊 查看日志文件", command=self._view_log, state=tk.DISABLED
         )
         self.view_log_btn.pack(side=tk.LEFT, padx=5)
         
         self.clear_log_btn = ttk.Button(
-            btn_frame, text="清空日志", command=self._clear_log
+            right_btn_frame, text="🗑️ 清空日志", command=self._clear_log
         )
-        self.clear_log_btn.pack(side=tk.RIGHT, padx=5)
+        self.clear_log_btn.pack(side=tk.LEFT, padx=5)
         
         # 4. 进度条
         self.progress_frame = ttk.Frame(main_frame)
         self.progress_frame.pack(fill=tk.X, pady=(0, 15))
         
-        self.progress_label = ttk.Label(self.progress_frame, text="进度:")
+        self.progress_label = ttk.Label(self.progress_frame, text="📈 进度:")
         self.progress_label.pack(side=tk.LEFT)
         
         self.progress_bar = ttk.Progressbar(
@@ -444,17 +496,18 @@ class BatchCopyGUI(tk.Tk):
         )
         self.progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         
+        # 进度百分比标签
+        self.progress_percent = ttk.Label(self.progress_frame, text="0%")
+        self.progress_percent.pack(side=tk.LEFT, padx=(5, 0))
+        
         # 5. 日志显示区
-        log_frame = ttk.LabelFrame(main_frame, text="处理日志", padding=10)
+        log_frame = ttk.LabelFrame(main_frame, text="📝 处理日志", padding=10)
         log_frame.pack(fill=tk.BOTH, expand=True)
         
         self.log_text = scrolledtext.ScrolledText(
             log_frame, wrap=tk.WORD, state=tk.DISABLED, font=("Consolas", 10)
         )
         self.log_text.pack(fill=tk.BOTH, expand=True)
-        
-        # 添加分隔线增强视觉效果
-        ttk.Separator(main_frame, orient='horizontal').pack(fill=tk.X, pady=10)
 
     def _redirect_stdout(self):
         """重定向stdout到日志Text组件"""
@@ -463,13 +516,15 @@ class BatchCopyGUI(tk.Tk):
 
     def _listen_queues(self):
         """监听日志队列和进度队列，更新GUI"""
-        # 处理日志队列
-        while not log_queue.empty():
+        # 处理日志队列（限制每次处理的消息数量，避免UI阻塞）
+        processed = 0
+        while not log_queue.empty() and processed < 10:  # 每次最多处理10条消息
             message = log_queue.get_nowait()
             self.log_text.config(state=tk.NORMAL)
             self.log_text.insert(tk.END, message)
             self.log_text.see(tk.END)  # 自动滚动到末尾
             self.log_text.config(state=tk.DISABLED)
+            processed += 1
 
         # 处理进度队列
         while not progress_queue.empty():
@@ -478,20 +533,29 @@ class BatchCopyGUI(tk.Tk):
                 # 设置进度条最大值
                 self.progress_bar["maximum"] = data
                 self.progress_bar["value"] = 0
+                self.progress_percent.config(text="0%")
             elif msg_type == "update":
                 # 更新进度值
                 self.progress_bar["value"] = data
+                # 计算百分比
+                max_val = self.progress_bar["maximum"]
+                if max_val > 0:
+                    percent = int((data / max_val) * 100)
+                    self.progress_percent.config(text=f"{percent}%")
             elif msg_type == "complete":
                 # 处理完成，启用按钮
                 self.start_btn.config(state=tk.NORMAL)
                 self.view_log_btn.config(state=tk.NORMAL)
+                self.open_target_btn.config(state=tk.NORMAL)
+                self.running = False
                 if data:
                     messagebox.showinfo("完成", "批量复制任务已完成！")
                 else:
                     messagebox.showerror("失败", "任务执行过程中出现错误，请查看日志！")
 
-        # 100ms后再次检查队列
-        self.after(100, self._listen_queues)
+        # 调整检查间隔：任务运行时提高刷新率，空闲时降低刷新率
+        interval = 50 if self.running else 200
+        self.after(interval, self._listen_queues)
 
     def _auto_load_files(self):
         """自动加载配置文件和原始清单"""
@@ -544,16 +608,20 @@ class BatchCopyGUI(tk.Tk):
             self._check_start_button_state()
 
     def _select_list_file(self):
-        """选择原始清单文件"""
+        """选择原始清单文件（仅显示CSV和TXT）"""
         default_dir = get_root_path()
         default_filename = self.config_data["original_list_filename"] if (self.config_data and "original_list_filename" in self.config_data) else "Original file list.csv"
         default_path = os.path.join(default_dir, default_filename)
 
         path = filedialog.askopenfilename(
-            title="选择原始清单文件",
+            title="选择原始清单文件（仅支持CSV/TXT）",
             initialdir=default_dir,
             initialfile=os.path.basename(default_path),
-            filetypes=[("CSV文件", "*.csv"), ("所有文件", "*.*")]
+            filetypes=[
+                ("支持格式", "*.csv;*.txt"),
+                ("CSV文件", "*.csv"),
+                ("文本文件", "*.txt")
+            ]
         )
 
         if path:
@@ -579,7 +647,10 @@ class BatchCopyGUI(tk.Tk):
         # 禁用按钮，防止重复点击
         self.start_btn.config(state=tk.DISABLED)
         self.view_log_btn.config(state=tk.DISABLED)
+        self.open_target_btn.config(state=tk.DISABLED)
         self.progress_bar["value"] = 0
+        self.progress_percent.config(text="0%")
+        self.running = True  # 设置运行状态标志
 
         # 启动后台工作线程
         threading.Thread(
@@ -592,12 +663,54 @@ class BatchCopyGUI(tk.Tk):
         """更新进度（兼容旧逻辑，实际通过队列更新）"""
         pass
 
+    def _edit_config(self):
+        """编辑配置文件"""
+        if self.config_path and os.path.exists(self.config_path):
+            try:
+                if platform.system() == 'Windows':
+                    os.startfile(self.config_path)
+                elif platform.system() == 'Darwin':  # macOS
+                    subprocess.call(['open', self.config_path])
+                else:  # Linux
+                    subprocess.call(['xdg-open', self.config_path])
+            except Exception as e:
+                messagebox.showerror("错误", f"打开配置文件失败: {str(e)}")
+        else:
+            messagebox.showwarning("警告", "请先选择配置文件！")
+
+    def _open_target_dir(self):
+        """打开目标目录"""
+        if self.config_data and "target_dir" in self.config_data:
+            target_dir = self.config_data["target_dir"]
+            if os.path.exists(target_dir):
+                try:
+                    if platform.system() == 'Windows':
+                        os.startfile(target_dir)
+                    elif platform.system() == 'Darwin':  # macOS
+                        subprocess.call(['open', target_dir])
+                    else:  # Linux
+                        subprocess.call(['xdg-open', target_dir])
+                except Exception as e:
+                    messagebox.showerror("错误", f"打开目标目录失败: {str(e)}")
+            else:
+                messagebox.showwarning("警告", "目标目录不存在！")
+        else:
+            messagebox.showwarning("警告", "未加载配置信息，无法确定目标目录位置")
+
     def _view_log(self):
         """打开日志文件"""
         if self.config_data and "log_file" in self.config_data:
             log_path = self.config_data["log_file"]
             if os.path.exists(log_path):
-                os.startfile(log_path)
+                try:
+                    if platform.system() == 'Windows':
+                        os.startfile(log_path)
+                    elif platform.system() == 'Darwin':  # macOS
+                        subprocess.call(['open', log_path])
+                    else:  # Linux
+                        subprocess.call(['xdg-open', log_path])
+                except Exception as e:
+                    messagebox.showerror("错误", f"打开日志文件失败: {str(e)}")
             else:
                 messagebox.showerror("错误", f"日志文件不存在: {log_path}")
         else:
