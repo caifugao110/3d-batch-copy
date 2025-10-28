@@ -16,7 +16,7 @@ import subprocess
 import platform
 
 # 版本和版权信息
-VERSION = "V1.0.7"
+VERSION = "V1.0.8"
 COPYRIGHT = "Tobin © 2025"
 PROJECT_URL = "https://github.com/caifugao110/3d-batch-copy"
 
@@ -370,7 +370,7 @@ class BatchCopyGUI(tk.Tk):
                             padding=6)
         self.style.map('TButton',
                       foreground=[('active', 'blue'), ('pressed', 'red')],
-                      background=[('active', '#e0e0e0')])
+                      background=[('active', '#3498db'), ('pressed', '#2980b9')])
         
         # 配置标签样式
         self.style.configure('TLabel', 
@@ -379,12 +379,12 @@ class BatchCopyGUI(tk.Tk):
         
         # 配置进度条样式
         self.style.configure('TProgressbar',
-                            thickness=15)
+                            thickness=15, troughcolor='#ecf0f1', background='#3498db')
         
         # 配置标题标签样式
         self.style.configure('Header.TLabel',
                             font=('微软雅黑', 14, 'bold'),
-                            foreground='#2c3e50',
+                            foreground='#2980b9',
                             padding=8)
         
         # 配置链接样式
@@ -417,6 +417,11 @@ class BatchCopyGUI(tk.Tk):
         # 项目地址链接
         project_link = ttk.Label(info_frame, text="GitHub项目地址", style='Link.TLabel', cursor="hand2")
         project_link.pack(side=tk.LEFT)
+        # 软件使用说明链接
+        help_link = ttk.Label(info_frame, text="软件使用说明", style='Link.TLabel', cursor="hand2")
+        help_link.pack(side=tk.LEFT, padx=(15, 0))
+        help_link.bind("<Button-1>", lambda e: webbrowser.open("https://caifugao110.github.io/3d-batch-copy/"))
+        
         project_link.bind("<Button-1>", lambda e: webbrowser.open(PROJECT_URL))
         
         # 2. 文件选择区
@@ -505,7 +510,7 @@ class BatchCopyGUI(tk.Tk):
         log_frame.pack(fill=tk.BOTH, expand=True)
         
         self.log_text = scrolledtext.ScrolledText(
-            log_frame, wrap=tk.WORD, state=tk.DISABLED, font=("Consolas", 10)
+            log_frame, wrap=tk.WORD, state=tk.DISABLED, font=("Consolas", 10), bg='#f8f9fa', fg='#2c3e50'
         )
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
