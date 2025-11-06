@@ -15,9 +15,11 @@ from tkinter import filedialog, messagebox
 import webbrowser
 import subprocess
 import platform
+import requests
+import re
 
 # 版本和版权信息
-VERSION = "V1.1.6"
+VERSION = "V1.1.11"
 COPYRIGHT = "Tobin © 2025"
 PROJECT_URL = "https://github.com/caifugao110/3d-batch-copy"
 
@@ -42,8 +44,145 @@ def get_root_path():
         return os.path.dirname(os.path.abspath(__file__))
 
 
+def get_latest_version():
+    """从Gitee Releases API获取最新版本号"""
+    api_url = "https://gitee.com/api/v5/repos/caifugao110/3d-batch-copy/tags"
+    try:
+        response = requests.get(api_url, timeout=5)
+        response.raise_for_status()
+        tags = response.json()
+        
+        version_pattern = re.compile(r'v(\d+\.\d+\.\d+)', re.IGNORECASE)
+        versions = []
+        
+        for tag in tags:
+            match = version_pattern.search(tag['name'])
+            if match:
+                version_str = match.group(1)
+                # 转换为元组以便比较 (主版本, 次版本, 修订号)
+                version_tuple = tuple(map(int, version_str.split('.')))
+                versions.append((version_tuple, tag['name']))
+        
+        if not versions:
+            return None
+            
+        # 按版本号降序排序，取最新版本
+        versions.sort(reverse=True, key=lambda x: x[0])
+        return versions[0][1]  # 返回完整的版本标签名，如"v1.2.0"
+        
+    except Exception as e:
+        print(f"检查更新失败: {str(e)}")
+        return None
+
+
+def compare_versions(current_version, latest_version):
+    """比较版本号，返回True如果有新版本"""
+    try:
+        # 提取数字部分
+        version_pattern = re.compile(r'v(\d+\.\d+\.\d+)', re.IGNORECASE)
+        
+        current_match = version_pattern.search(current_version)
+        latest_match = version_pattern.search(latest_version)
+        
+        if not current_match or not latest_match:
+            return False
+            
+        # 转换为元组进行比较
+        current = tuple(map(int, current_match.group(1).split('.')))
+        latest = tuple(map(int, latest_match.group(1).split('.')))
+        
+        return latest > current
+        
+    except Exception as e:
+        print(f"版本比较失败: {str(e)}")
+        return False
+
+
+def check_for_updates():
+    """检查是否有更新"""
+    latest_version = get_latest_version()
+    if not latest_version:
+        return None, "无法获取最新版本信息"
+        
+    if compare_versions(VERSION, latest_version):
+        # 假设下载链接的格式与 caokao.py 中一致
+        # 更改为 ZIP 文件下载链接，以支持 One-Folder 模式更新
+        download_url = f"https://gitee.com/caifugao110/3d-batch-copy/releases/download/{latest_version}/3D文件批量复制工具.zip"
+        return latest_version, download_url
+    else:
+        return None, "当前已是最新版本"
+
+
+def run_update_bat(download_url):
+    """创建并运行 bat 脚本进行更新和重启"""
+    root_path = get_root_path()
+    exe_name = os.path.basename(sys.executable)
+    bat_path = os.path.join(root_path, "update_script.bat")
+    
+    # 提取下载文件名
+    download_filename = download_url.split('/')[-1]
+    
+    # 写入 bat 脚本内容 - One-Folder 模式更新逻辑
+    # 注意：这里假设 check_for_updates 返回的 download_url 指向一个包含 One-Folder 文件夹的 ZIP 文件
+    # 且 ZIP 文件名是 "3D文件批量复制工具.zip"
+    
+    
+    bat_content = f"""@echo off
+set "DOWNLOAD_URL={download_url}"
+set "EXE_NAME={exe_name}"
+set "ROOT_PATH={root_path}"
+set "TEMP_ZIP_NAME={download_filename}"
+set "TEMP_ZIP_PATH=%ROOT_PATH%\\%TEMP_ZIP_NAME%"
+
+echo 正在下载新版本压缩包...
+:: 使用 curl 下载 ZIP 文件
+"C:\\Windows\\System32\\curl.exe" -L -A "Mozilla/5.0" -o "%TEMP_ZIP_PATH%" "%DOWNLOAD_URL%"
+
+if exist "%TEMP_ZIP_PATH%" (
+    echo 下载完成，正在等待旧程序完全退出...
+    :: 增加延迟，确保旧程序进程完全退出
+    timeout /t 5 /nobreak >nul
+    
+    echo 正在解压和替换旧文件...
+    
+    :: 使用 PowerShell 解压 ZIP 包到当前目录
+    :: -Force 覆盖现有文件
+    PowerShell -Command "Expand-Archive -Path '%TEMP_ZIP_PATH%' -DestinationPath '%ROOT_PATH%' -Force"
+    
+    :: 清理临时 ZIP 文件
+    del "%TEMP_ZIP_PATH%"
+    
+    echo 替换成功，正在重启程序...
+    :: 启动新 EXE (它现在在新的 One-Folder 文件夹中)
+    :: 注意：在 One-Folder 模式下，EXE 位于其同名文件夹内。
+    start "" "%ROOT_PATH%\\%EXE_NAME%"
+    
+    :: 自动删除自身脚本
+    del "%~f0"
+    :: 退出 bat 脚本
+    exit
+) else (
+    echo 下载失败，请检查网络连接或下载链接是否正确。
+    pause
+    exit
+)"""
+    
+    try:
+        # 使用 gbk 编码写入 bat 文件，以确保中文兼容性
+        with open(bat_path, "w", encoding="gbk") as f:
+            f.write(bat_content)
+        
+        # 启动 bat 脚本，并退出当前程序
+        # 使用 shell=True 确保 bat 文件能被正确执行
+        subprocess.Popen([bat_path], creationflags=subprocess.CREATE_NEW_CONSOLE, shell=True)
+        sys.exit(0)
+    
+    except Exception as e:
+        messagebox.showerror("更新失败", f"无法创建或运行更新脚本: {str(e)}")
+
+
 def clean_filename(name):
-    """清理文件名：去除特定后缀和标识符，统一转为小写"""
+    """清理文件名: 去除特定后缀和标识符，统一转为小写"""
     # 新增处理：包含 "-L(" 则分割取前面部分
     if "-L(" in name:
         parts = name.split("-L(")
@@ -704,6 +843,9 @@ class BatchCopyGUI(ctk.CTk):
         
         # 自动加载配置文件
         self.after(200, self._auto_load_files)
+        
+        # 启动时检查更新
+        self.after(500, self.check_update_on_start)
     
     def _init_widgets(self):
         """初始化GUI组件"""
@@ -792,6 +934,17 @@ class BatchCopyGUI(ctk.CTk):
             command=lambda: webbrowser.open("https://caifugao110.github.io/3d-batch-copy/")
         )
         help_btn.pack(side="left", padx=5)
+
+        # 手动更新按钮
+        update_btn = ctk.CTkButton(
+            info_frame,
+            text="🔄 检查更新",
+            width=120,
+            height=30,
+            font=("微软雅黑", 12),
+            command=self._check_update_manual
+        )
+        update_btn.pack(side="left", padx=5)
         
         # 主内容区
         content_frame = ctk.CTkFrame(main_container, fg_color="transparent")
@@ -1015,7 +1168,8 @@ class BatchCopyGUI(ctk.CTk):
         ctk.set_appearance_mode(new_appearance_mode)
     
     def _change_color_theme_event(self, new_color_theme: str):
-        ctk.set_default_color_theme(new_color_theme)
+        # customtkinter的主题名称是小写的，但用户可能传入大写
+        ctk.set_default_color_theme(new_color_theme.lower())
     
     def _redirect_stdout(self):
         """重定向标准输出到日志文本框"""
@@ -1092,6 +1246,56 @@ class BatchCopyGUI(ctk.CTk):
                 
                 # 启用开始按钮
                 self.start_btn.configure(state="normal")
+                
+    def check_update_on_start(self):
+        """启动时检查更新（自动）"""
+        # 在新线程中执行网络请求，避免阻塞 GUI
+        threading.Thread(target=self._check_update_thread, args=(False,), daemon=True).start()
+
+    def _check_update_manual(self):
+        """手动检查更新"""
+        messagebox.showinfo("检查更新", "正在检查最新版本，请稍候...")
+        threading.Thread(target=self._check_update_thread, args=(True,), daemon=True).start()
+
+    def _check_update_thread(self, is_manual=False):
+        """在单独线程中执行更新检查"""
+        latest_version, download_url = check_for_updates()
+        
+        # 使用 after 方法将结果传递回主线程处理 GUI 交互
+        self.after(0, lambda: self._handle_update_result(latest_version, download_url, is_manual))
+
+    def _handle_update_result(self, latest_version, download_url, is_manual):
+        """在主线程中处理更新检查结果"""
+        # download_url 可能是错误信息，只有在成功获取版本号时才认为是下载链接
+        if latest_version and download_url and download_url.startswith("http"):
+            # 发现新版本
+            if messagebox.askyesno(
+                "发现新版本", 
+                f"发现新版本: {latest_version}\n当前版本: {VERSION}\n是否立即更新？"
+            ):
+                # 用户同意更新，执行 bat 脚本
+                self.update_program(latest_version, download_url)
+            elif is_manual:
+                messagebox.showinfo("更新提示", "您选择了暂不更新。")
+        else:
+            # 无法获取或已是最新版本
+            if is_manual:
+                messagebox.showinfo("更新提示", download_url)
+            print(f"版本检查结果: {download_url}")
+            
+    def update_program(self, latest_version, download_url):
+        """执行更新操作"""
+        if platform.system() == "Windows":
+            # Windows 系统使用 bat 脚本更新
+            messagebox.showinfo("开始更新", "程序将退出并启动自动更新程序，请稍候...")
+            run_update_bat(download_url)
+        else:
+            # 非 Windows 系统，提示用户手动下载
+            if messagebox.askyesno(
+                "更新提示", 
+                f"非 Windows 系统，无法自动更新。\n最新版本: {latest_version}\n是否打开下载页面手动下载？"
+            ):
+                webbrowser.open(PROJECT_URL)
     
     def _select_config(self):
         """选择配置文件"""
