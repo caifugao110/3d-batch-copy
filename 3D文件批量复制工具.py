@@ -19,7 +19,7 @@ import requests
 import re
 
 # 版本和版权信息
-VERSION = "V1.1.11"
+VERSION = "V1.1.12"
 COPYRIGHT = "Tobin © 2025"
 PROJECT_URL = "https://github.com/caifugao110/3d-batch-copy"
 
@@ -47,8 +47,13 @@ def get_root_path():
 def get_latest_version():
     """从Gitee Releases API获取最新版本号"""
     api_url = "https://gitee.com/api/v5/repos/caifugao110/3d-batch-copy/tags"
+    # 添加Gitee认证token
+    headers = {
+        "Authorization": "token a09da64c1d9e9c7420a18dfd838890b0"
+    }
     try:
-        response = requests.get(api_url, timeout=5)
+        # 在请求中加入headers参数
+        response = requests.get(api_url, headers=headers, timeout=5)
         response.raise_for_status()
         tags = response.json()
         
@@ -73,6 +78,7 @@ def get_latest_version():
     except Exception as e:
         print(f"检查更新失败: {str(e)}")
         return None
+
 
 
 def compare_versions(current_version, latest_version):
