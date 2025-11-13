@@ -19,11 +19,11 @@ import requests
 import re
 
 # 版本和版权信息
-VERSION = "V1.1.12"
+VERSION = "V1.1.15"
 COPYRIGHT = "Tobin © 2025"
 PROJECT_URL = "https://github.com/caifugao110/3d-batch-copy"
 
-# 全局队列：用于子线程与GUI主线程通信
+# 全局队列：用于子线程与GUI线程通信
 log_queue = queue.Queue()
 progress_queue = queue.Queue()
 
@@ -35,14 +35,12 @@ DEFAULT_COLOR_THEME = "blue"     # "blue", "green", "dark-blue" (customtkinter�
 ctk.set_appearance_mode(DEFAULT_APPEARANCE_MODE)
 ctk.set_default_color_theme(DEFAULT_COLOR_THEME)
 
-
 def get_root_path():
     """获取程序根目录（exe所在目录，支持PyInstaller打包后路径）"""
     if hasattr(sys, '_MEIPASS'):
         return os.path.dirname(os.path.abspath(sys.executable))
     else:
         return os.path.dirname(os.path.abspath(__file__))
-
 
 def get_latest_version():
     """从Gitee Releases API获取最新版本号"""
@@ -79,8 +77,6 @@ def get_latest_version():
         print(f"检查更新失败: {str(e)}")
         return None
 
-
-
 def compare_versions(current_version, latest_version):
     """比较版本号，返回True如果有新版本"""
     try:
@@ -103,7 +99,6 @@ def compare_versions(current_version, latest_version):
         print(f"版本比较失败: {str(e)}")
         return False
 
-
 def check_for_updates():
     """检查是否有更新"""
     latest_version = get_latest_version()
@@ -112,12 +107,11 @@ def check_for_updates():
         
     if compare_versions(VERSION, latest_version):
         # 假设下载链接的格式与 caokao.py 中一致
-        # 更改为 ZIP 文件下载链接，以支持 One-Folder 模式更新
+        # 改为 ZIP 文件下载链接，以支持 One-Folder 模式更新
         download_url = f"https://gitee.com/caifugao110/3d-batch-copy/releases/download/{latest_version}/3D文件批量复制工具.zip"
         return latest_version, download_url
     else:
         return None, "当前已是最新版本"
-
 
 def run_update_bat(download_url):
     """创建并运行 bat 脚本进行更新和重启"""
@@ -128,64 +122,94 @@ def run_update_bat(download_url):
     # 提取下载文件名
     download_filename = download_url.split('/')[-1]
     
-    # 写入 bat 脚本内容 - One-Folder 模式更新逻辑
-    # 注意：这里假设 check_for_updates 返回的 download_url 指向一个包含 One-Folder 文件夹的 ZIP 文件
-    # 且 ZIP 文件名是 "3D文件批量复制工具.zip"
-    
-    
-    bat_content = f"""@echo off
+    # 增强版批处理脚本，解决文件锁定和替换问题
+    bat_content = fr"""@echo off
+setlocal EnableDelayedExpansion
 set "DOWNLOAD_URL={download_url}"
 set "EXE_NAME={exe_name}"
 set "ROOT_PATH={root_path}"
 set "TEMP_ZIP_NAME={download_filename}"
-set "TEMP_ZIP_PATH=%ROOT_PATH%\\%TEMP_ZIP_NAME%"
+set "TEMP_ZIP_PATH=!ROOT_PATH!\\!TEMP_ZIP_NAME!"  # 在f字符串前加r，变成原始字符串
 
 echo 正在下载新版本压缩包...
-:: 使用 curl 下载 ZIP 文件
-"C:\\Windows\\System32\\curl.exe" -L -A "Mozilla/5.0" -o "%TEMP_ZIP_PATH%" "%DOWNLOAD_URL%"
-
-if exist "%TEMP_ZIP_PATH%" (
-    echo 下载完成，正在等待旧程序完全退出...
-    :: 增加延迟，确保旧程序进程完全退出
-    timeout /t 5 /nobreak >nul
-    
-    echo 正在解压和替换旧文件...
-    
-    :: 使用 PowerShell 解压 ZIP 包到当前目录
-    :: -Force 覆盖现有文件
-    PowerShell -Command "Expand-Archive -Path '%TEMP_ZIP_PATH%' -DestinationPath '%ROOT_PATH%' -Force"
-    
-    :: 清理临时 ZIP 文件
-    del "%TEMP_ZIP_PATH%"
-    
-    echo 替换成功，正在重启程序...
-    :: 启动新 EXE (它现在在新的 One-Folder 文件夹中)
-    :: 注意：在 One-Folder 模式下，EXE 位于其同名文件夹内。
-    start "" "%ROOT_PATH%\\%EXE_NAME%"
-    
-    :: 自动删除自身脚本
-    del "%~f0"
-    :: 退出 bat 脚本
-    exit
-) else (
-    echo 下载失败，请检查网络连接或下载链接是否正确。
+powershell.exe -Command "& {{ $ProgressPreference = 'SilentlyContinue'; try {{ Invoke-WebRequest -Uri '!DOWNLOAD_URL!' -OutFile '!TEMP_ZIP_PATH!' -UseBasicParsing; exit 0; }} catch {{ Write-Error $_.Exception.Message; exit 1; }} }}"
+if %errorlevel% neq 0 (
+    echo 下载失败，请检查网络连接
     pause
-    exit
-)"""
+    exit /b 1
+)
+
+echo 等待主程序退出...
+:WAIT_LOOP
+tasklist /FI "IMAGENAME eq !EXE_NAME!" 2>NUL | find /I /N "!EXE_NAME!">NUL
+if "%ERRORLEVEL%"=="0" (
+    timeout /t 1 /nobreak >nul
+    goto WAIT_LOOP
+)
+
+echo 正在解压更新文件...
+REM 创建临时解压目录
+set "TEMP_EXTRACT_DIR=!ROOT_PATH!\\temp_extract"
+mkdir "!TEMP_EXTRACT_DIR!" 2>nul
+
+REM 解压到临时目录
+powershell.exe -Command "& {{ try {{ Expand-Archive -Path '!TEMP_ZIP_PATH!' -DestinationPath '!TEMP_EXTRACT_DIR!' -Force; exit 0; }} catch {{ Write-Error $_.Exception.Message; exit 1; }} }}"
+if %errorlevel% neq 0 (
+    echo 解压失败
+    pause
+    exit /b 1
+)
+
+REM 复制文件，排除需要保留的配置文件
+echo 复制更新文件...
+for /R "!TEMP_EXTRACT_DIR!" %%f in (*) do (
+    set "filename=%%~nxf"
+    set "relpath=%%f"
+    set "relpath=!relpath:!TEMP_EXTRACT_DIR!\=!"
+    set "destpath=!ROOT_PATH!\\!relpath!"
+    
+    REM 检查是否为需要排除的文件
+    if /I not "!filename!"=="config.ini" (
+        if /I not "!filename!"=="Original file list.txt" (
+            echo 更新: !relpath!
+            copy /Y "%%f" "!destpath!" >nul
+        ) else (
+            echo 保留: !relpath!
+        )
+    ) else (
+        echo 保留: !relpath!
+    )
+)
+
+REM 清理临时目录和文件
+echo 清理临时文件...
+rmdir /S /Q "!TEMP_EXTRACT_DIR!" 2>nul
+del "!TEMP_ZIP_PATH!" 2>nul
+
+echo 重启应用程序...
+start "" "!ROOT_PATH!\\!EXE_NAME!"
+
+echo 清理更新脚本...
+ping 127.0.0.1 -n 3 >nul
+del "%~f0" >nul 2>&1
+exit /b 0
+"""
     
     try:
-        # 使用 gbk 编码写入 bat 文件，以确保中文兼容性
         with open(bat_path, "w", encoding="gbk") as f:
             f.write(bat_content)
         
-        # 启动 bat 脚本，并退出当前程序
-        # 使用 shell=True 确保 bat 文件能被正确执行
-        subprocess.Popen([bat_path], creationflags=subprocess.CREATE_NEW_CONSOLE, shell=True)
+        # 使用更可靠的方式启动批处理
+        subprocess.Popen(
+            ["cmd.exe", "/c", bat_path],
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+            close_fds=True
+        )
+        # 立即退出主程序，释放文件锁
         sys.exit(0)
     
     except Exception as e:
         messagebox.showerror("更新失败", f"无法创建或运行更新脚本: {str(e)}")
-
 
 def clean_filename(name):
     """清理文件名: 去除特定后缀和标识符，统一转为小写"""
@@ -205,8 +229,6 @@ def clean_filename(name):
         parts = name.split("L(")
         name = parts[0]
     return name.lower()
-
-
 
 def load_configuration(config_path):
     """加载配置文件"""
@@ -274,7 +296,6 @@ def load_configuration(config_path):
         print("请检查 config.ini 文件格式是否正确")
         return None
 
-
 def save_configuration(config_path, config_data):
     """保存配置文件"""
     try:
@@ -314,7 +335,6 @@ def save_configuration(config_path, config_data):
         print(f"🔥 配置保存失败: {str(e)}")
         return False
 
-
 def cleanup_target_directory(target_dir):
     """清理目标目录中的.step文件"""
     print("🧹 正在清理目标目录...")
@@ -335,7 +355,6 @@ def cleanup_target_directory(target_dir):
                 print(f"⚠️ 删除旧文件失败: {file} - {str(e)}")
     
     print(f"✅ 已清理 {clean_count} 个旧文件")
-
 
 def build_file_index(source_dirs):
     """构建文件索引（支持递归）"""
@@ -381,7 +400,7 @@ def read_original_file_list(list_file):
             with open(list_file, "r", encoding="utf-8-sig") as f:
                 all_lines = [line.strip() for line in f if line.strip()]
         else:
-            print(f"⚠️ 不支持的文件格式: {ext}，仅支持CSV和TXT文件")
+            print(f"⚠️ 不支持的文件格式: {ext}, 仅支持CSV和TXT文件")
             return None
         
         print(f"📋 待处理文件数: {len(all_lines)}")
@@ -390,7 +409,6 @@ def read_original_file_list(list_file):
         print(f"🔥 文件读取失败: {str(e)}")
         print(f"请检查文件是否存在且格式正确: {list_file}")
         return None
-
 
 def process_item(item, target_dir, index, retry_attempts, stop_event, rename_files):
     """处理单个文件复制，添加stop_event参数用于终止，添加rename_files参数控制是否重命名"""
@@ -455,7 +473,6 @@ def process_item(item, target_dir, index, retry_attempts, stop_event, rename_fil
         "copied": "未找到",
         "source": ""
     }
-
 
 def worker(config, progress_callback, stop_event):
     """后台工作线程：执行完整的复制流程，添加stop_event参数"""
@@ -559,7 +576,7 @@ def worker(config, progress_callback, stop_event):
             print("可能的原因:")
             print("  - 网络驱动器连接异常")
             print("  - 源目录路径不正确")
-            print("  - 文件命名不匹配")
+            print("  - 文件名不匹配")
             print("请检查配置文件和网络连接状态")
 
         print(f"\n🎉 程序执行完成！")
@@ -567,7 +584,6 @@ def worker(config, progress_callback, stop_event):
         print("\n⏹️ 任务已被用户终止")
 
     progress_queue.put(("complete", not stop_event.is_set()))
-
 
 def write_result_log(log_file, result_log):
     """写入复制日志文件，使用utf-8-sig编码解决Office乱码问题"""
@@ -586,7 +602,6 @@ def write_result_log(log_file, result_log):
         print(f"⚠️ 复制日志文件写入失败: {str(e)}")
         return False
 
-
 class StdoutRedirector:
     """重定向stdout到GUI的Text组件"""
     def __init__(self, text_widget):
@@ -597,7 +612,6 @@ class StdoutRedirector:
 
     def flush(self):
         pass
-
 
 class SettingsWindow(ctk.CTkToplevel):
     """配置管理窗口"""
@@ -816,6 +830,119 @@ class SettingsWindow(ctk.CTkToplevel):
         except ValueError:
             messagebox.showerror("错误", "线程数和重试次数必须是整数")
 
+class ListManagerWindow(ctk.CTkToplevel):
+    """清单管理窗口"""
+    def __init__(self, parent, list_file_path, on_save_callback):
+        super().__init__(parent)
+        self.title("清单管理")
+        self.geometry("800x600")
+        self.list_file_path = list_file_path
+        self.on_save_callback = on_save_callback
+        
+        # 使窗口模态化
+        self.transient(parent)
+        self.grab_set()
+        
+        self._init_widgets()
+        
+        # 加载文件内容
+        self._load_file_content()
+        
+        # 绑定窗口关闭事件
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
+    
+    def _init_widgets(self):
+        """初始化清单管理窗口组件"""
+        # 主框架
+        main_frame = ctk.CTkFrame(self, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=15, pady=15)
+        
+        # 标题
+        title_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        title_frame.pack(fill="x", pady=(0, 10))
+        
+        ctk.CTkLabel(
+            title_frame, 
+            text=f"编辑清单文件: {os.path.basename(self.list_file_path)}",
+            font=("微软雅黑", 16, "bold")
+        ).pack(anchor="w")
+        
+        # 文本编辑区
+        text_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        text_frame.pack(fill="both", expand=True, pady=(0, 10))
+        
+        self.text_editor = ctk.CTkTextbox(
+            text_frame,
+            wrap="word",
+            font=("微软雅黑", 12),
+            padx=10,
+            pady=10
+        )
+        self.text_editor.pack(fill="both", expand=True, side="left")
+        
+        # 滚动条
+        scrollbar = ctk.CTkScrollbar(
+            text_frame,
+            command=self.text_editor.yview
+        )
+        scrollbar.pack(side="right", fill="y")
+        self.text_editor.configure(yscrollcommand=scrollbar.set)
+        
+        # 按钮区
+        btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        btn_frame.pack(fill="x")
+        
+        ctk.CTkButton(
+            btn_frame,
+            text="保存并退出",
+            width=150,
+            font=("微软雅黑", 12),
+            command=self._save_and_exit
+        ).pack(side="right", padx=5)
+        
+        ctk.CTkButton(
+            btn_frame,
+            text="取消",
+            width=150,
+            font=("微软雅黑", 12),
+            command=self.destroy
+        ).pack(side="right", padx=5)
+    
+    def _load_file_content(self):
+        """加载文件内容到编辑器"""
+        try:
+            if os.path.exists(self.list_file_path):
+                with open(self.list_file_path, "r", encoding="utf-8-sig") as f:
+                    content = f.read()
+                self.text_editor.insert("1.0", content)
+                self.text_editor.configure(state="normal")
+        except Exception as e:
+            messagebox.showerror("错误", f"加载文件失败: {str(e)}")
+            self.destroy()
+    
+    def _save_and_exit(self):
+        """保存文件并退出"""
+        try:
+            # 获取编辑器内容
+            content = self.text_editor.get("1.0", "end-1c")
+            
+            # 保存到文件
+            with open(self.list_file_path, "w", encoding="utf-8-sig") as f:
+                f.write(content)
+            
+            # 调用保存回调
+            if self.on_save_callback:
+                self.on_save_callback()
+            
+            messagebox.showinfo("成功", "清单文件已保存")
+            self.destroy()
+        except Exception as e:
+            messagebox.showerror("错误", f"保存文件失败: {str(e)}")
+    
+    def _on_closing(self):
+        """窗口关闭事件处理"""
+        if messagebox.askyesno("确认", "确定要退出吗？未保存的更改将丢失。"):
+            self.destroy()
 
 class BatchCopyGUI(ctk.CTk):
     """3D文件批量复制GUI界面 - CustomTkinter 版本"""
@@ -1070,6 +1197,17 @@ class BatchCopyGUI(ctk.CTk):
             command=self._open_settings
         ).pack(fill="x", pady=(0, 8))
         
+        # 添加清单管理按钮
+        ctk.CTkButton(
+            btn_section,
+            text="📝 清单管理",
+            font=("微软雅黑", 13),
+            height=40,
+            state="disabled",
+            command=self._open_list_manager
+        ).pack(fill="x", pady=(0, 8))
+        self.list_manager_btn = btn_section.winfo_children()[-1]
+        
         ctk.CTkButton(
             btn_section,
             text="📂 打开目标目录",
@@ -1249,6 +1387,8 @@ class BatchCopyGUI(ctk.CTk):
                 if os.path.exists(default_list):
                     self.list_file_path = default_list
                     self.list_label.configure(text=os.path.basename(default_list))
+                    # 启用清单管理按钮
+                    self.list_manager_btn.configure(state="normal")
                 
                 # 启用开始按钮
                 self.start_btn.configure(state="normal")
@@ -1260,14 +1400,13 @@ class BatchCopyGUI(ctk.CTk):
 
     def _check_update_manual(self):
         """手动检查更新"""
-        messagebox.showinfo("检查更新", "正在检查最新版本，请稍候...")
         threading.Thread(target=self._check_update_thread, args=(True,), daemon=True).start()
 
     def _check_update_thread(self, is_manual=False):
         """在单独线程中执行更新检查"""
         latest_version, download_url = check_for_updates()
         
-        # 使用 after 方法将结果传递回主线程处理 GUI 交互
+        # 使用 after 方法将结果传回主线程处理 GUI 交互
         self.after(0, lambda: self._handle_update_result(latest_version, download_url, is_manual))
 
     def _handle_update_result(self, latest_version, download_url, is_manual):
@@ -1324,6 +1463,8 @@ class BatchCopyGUI(ctk.CTk):
                 if os.path.exists(list_file):
                     self.list_file_path = list_file
                     self.list_label.configure(text=os.path.basename(list_file))
+                    # 启用清单管理按钮
+                    self.list_manager_btn.configure(state="normal")
                 
                 # 启用开始按钮
                 self.start_btn.configure(state="normal")
@@ -1340,6 +1481,8 @@ class BatchCopyGUI(ctk.CTk):
         if file_path:
             self.list_file_path = file_path
             self.list_label.configure(text=os.path.basename(file_path))
+            # 启用清单管理按钮
+            self.list_manager_btn.configure(state="normal")
             
             # 如果有配置数据，更新配置中的清单文件名
             if self.config_data and self.config_path:
@@ -1394,12 +1537,42 @@ class BatchCopyGUI(ctk.CTk):
             if os.path.exists(list_file):
                 self.list_file_path = list_file
                 self.list_label.configure(text=os.path.basename(list_file))
+                # 启用清单管理按钮
+                self.list_manager_btn.configure(state="normal")
             
             # 启用开始按钮
             self.start_btn.configure(state="normal")
             
             # 更新配置文件显示
             self.config_label.configure(text=os.path.basename(self.config_path))
+    
+    def _open_list_manager(self):
+        """打开清单管理窗口"""
+        if not self.list_file_path:
+            messagebox.showwarning("警告", "请先选择清单文件")
+            return
+        
+        # 创建清单管理窗口
+        list_manager_window = ListManagerWindow(
+            self,
+            self.list_file_path,
+            self._on_list_saved
+        )
+        list_manager_window.focus()
+    
+    def _on_list_saved(self):
+        """清单保存后的回调函数"""
+        # 在日志中显示保存提示
+        print(f"✅ 清单文件已保存: {self.list_file_path}")
+        print("🔄 正在重新加载清单文件...")
+        
+        # 重新加载清单文件
+        if self.config_data:
+            original_files = read_original_file_list(self.list_file_path)
+            if original_files:
+                print(f"✅ 清单文件重新加载成功，共 {len(original_files)} 个文件")
+            else:
+                print("⚠️ 清单文件重新加载失败")
     
     def _start_process(self):
         """开始批量复制过程"""
@@ -1418,6 +1591,7 @@ class BatchCopyGUI(ctk.CTk):
         self.stop_btn.configure(state="normal")
         self.open_target_btn.configure(state="disabled")
         self.view_log_btn.configure(state="disabled")
+        self.list_manager_btn.configure(state="disabled")
         
         # 重置进度
         self.progress_bar.set(0)
@@ -1487,7 +1661,6 @@ class BatchCopyGUI(ctk.CTk):
                 self.destroy()
         else:
             self.destroy()
-
 
 if __name__ == "__main__":
     app = BatchCopyGUI()
