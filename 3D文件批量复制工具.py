@@ -19,7 +19,7 @@ import requests
 import re
 
 # 版本和版权信息
-VERSION = "V1.1.15"
+VERSION = "V1.1.19"
 COPYRIGHT = "Tobin © 2025"
 PROJECT_URL = "https://github.com/caifugao110/3d-batch-copy"
 
@@ -74,7 +74,7 @@ def get_latest_version():
         return versions[0][1]  # 返回完整的版本标签名，如"v1.2.0"
         
     except Exception as e:
-        print(f"检查更新失败: {str(e)}")
+        print(f"⚠️ 检查更新失败: {str(e)}")
         return None
 
 def compare_versions(current_version, latest_version):
@@ -96,7 +96,7 @@ def compare_versions(current_version, latest_version):
         return latest > current
         
     except Exception as e:
-        print(f"版本比较失败: {str(e)}")
+        print(f"⚠️ 版本比较失败: {str(e)}")
         return False
 
 def check_for_updates():
@@ -234,7 +234,7 @@ def load_configuration(config_path):
     """加载配置文件"""
     if not os.path.exists(config_path):
         print(f"🔥 配置文件不存在: {config_path}")
-        print("请确保 config.ini 文件与exe在同一目录下")
+        print(f"⚠️ 请确保 config.ini 文件与exe在同一目录下")
         return None
 
     try:
@@ -250,6 +250,8 @@ def load_configuration(config_path):
         
         # 读取重命名选项配置
         rename_option = config.getboolean("Settings", "rename_files", fallback=False)
+        # 读取XT包含选项
+        include_xt = config.getboolean("Settings", "include_xt_format", fallback=False)
 
         # 构建路径
         root_path = get_root_path()
@@ -276,6 +278,7 @@ def load_configuration(config_path):
         print(f"   最大线程数: {max_workers}")
         print(f"   重试次数: {retry_attempts}")
         print(f"   按清单重命名: {'是' if rename_option else '否'}")
+        print(f"   包含 XT 格式: {'是' if include_xt else '否'}")
 
         return {
             "source_dirs": source_dirs,
@@ -289,11 +292,12 @@ def load_configuration(config_path):
             "target_dir_name": target_dir_name,
             "log_filename": log_filename,
             "config_path": config_path,
-            "rename_files": rename_option  # 添加重命名选项
+            "rename_files": rename_option,  # 添加重命名选项
+            "include_xt_format": include_xt
         }
     except Exception as e:
         print(f"🔥 配置文件解析失败: {str(e)}")
-        print("请检查 config.ini 文件格式是否正确")
+        print(f"⚠️ 请检查 config.ini 文件格式是否正确")
         return None
 
 def save_configuration(config_path, config_data):
@@ -306,14 +310,16 @@ def save_configuration(config_path, config_data):
         config["Paths"] = {
             "drive_letter": config_data.get("drive_letter", "D"),
             "target_dir_name": config_data.get("target_dir_name", "Target"),
-            "original_list_file": config_data.get("original_list_filename", "Original file list.csv"),
+            # 统一为 txt 默认
+            "original_list_file": config_data.get("original_list_filename", "Original file list.txt"),
             "log_file": config_data.get("log_filename", "log.csv")
         }
         
         config["Settings"] = {
             "max_workers": str(config_data.get("max_workers", 12)),
             "retry_attempts": str(config_data.get("retry_attempts", 3)),
-            "rename_files": str(config_data.get("rename_files", False)).lower()  # 保存重命名选项
+            "rename_files": str(config_data.get("rename_files", False)).lower(),  # 保存重命名选项
+            "include_xt_format": str(config_data.get("include_xt_format", False)).lower()  # 保存XT包含选项
         }
         
         # 保存源目录
@@ -335,8 +341,8 @@ def save_configuration(config_path, config_data):
         print(f"🔥 配置保存失败: {str(e)}")
         return False
 
-def cleanup_target_directory(target_dir):
-    """清理目标目录中的.step文件"""
+def cleanup_target_directory(target_dir, include_xt=False):
+    """清理目标目录中的step/stp和（可选）xt文件（不区分大小写）"""
     print("🧹 正在清理目标目录...")
     clean_count = 0
 
@@ -346,18 +352,34 @@ def cleanup_target_directory(target_dir):
         return
 
     for file in os.listdir(target_dir):
-        if file.lower().endswith(".step"):
-            try:
+        lower = file.lower()
+        try:
+            if lower.endswith(".step") or lower.endswith(".stp"):
                 file_path = os.path.join(target_dir, file)
                 os.remove(file_path)
                 clean_count += 1
-            except Exception as e:
-                print(f"⚠️ 删除旧文件失败: {file} - {str(e)}")
+            elif include_xt and (lower.endswith(".xt") or lower.endswith(".x_t")):
+                file_path = os.path.join(target_dir, file)
+                os.remove(file_path)
+                clean_count += 1
+        except Exception as e:
+            print(f"⚠️ 删除旧文件失败: {file} - {str(e)}")
     
     print(f"✅ 已清理 {clean_count} 个旧文件")
 
-def build_file_index(source_dirs):
-    """构建文件索引（支持递归）"""
+def is_xt_variant(filename):
+    """判断文件名是否属于XT变体（大小写不敏感）"""
+    lower = filename.lower()
+    # 使用扩展名判断，处理 .xt 和 .x_t 两种常见变体
+    return lower.endswith(".xt") or lower.endswith(".x_t")
+
+def is_step_variant(filename):
+    """判断是否为STEP类（.step 或 .stp 不区分大小写）"""
+    lower = filename.lower()
+    return lower.endswith(".step") or lower.endswith(".stp")
+
+def build_file_index(source_dirs, include_xt=False):
+    """构建文件索引（支持递归），支持可选包含 XT 格式 以及 .stp"""
     print("⏳ 正在构建全局文件索引（包含子目录）...")
     index = defaultdict(list)
     start_time = time.time()
@@ -371,14 +393,24 @@ def build_file_index(source_dirs):
             # 使用 os.walk 递归遍历
             for root, dirs, files in os.walk(src_dir):
                 for file in files:
-                    if file.lower().endswith(".step"):
+                    lower = file.lower()
+                    # 支持 .step 和 .stp
+                    if is_step_variant(file):
                         full_path = os.path.join(root, file)
                         base_name = os.path.splitext(file)[0]
                         clean_base = clean_filename(base_name)
                         prefix_key = clean_base[:4] if len(clean_base) >= 4 else clean_base
-                        # 注意：这里存储的 src_dir 是实际的 root，即文件所在的具体目录
                         index[prefix_key].append((clean_base, file, root))
                         total_files += 1
+                    else:
+                        # 根据配置决定是否索引 XT 变体
+                        if include_xt and is_xt_variant(file):
+                            full_path = os.path.join(root, file)
+                            base_name = os.path.splitext(file)[0]
+                            clean_base = clean_filename(base_name)
+                            prefix_key = clean_base[:4] if len(clean_base) >= 4 else clean_base
+                            index[prefix_key].append((clean_base, file, root))
+                            total_files += 1
         except Exception as e:
             print(f"⚠️ 目录扫描失败: {src_dir} - {str(e)}")
 
@@ -387,7 +419,7 @@ def build_file_index(source_dirs):
     return index
 
 def read_original_file_list(list_file):
-    """读取待处理文件列表（仅支持CSV和TXT格式）"""
+    """读取待处理文件列表（支持CSV和TXT格式）"""
     try:
         _, ext = os.path.splitext(list_file)
         ext = ext.lower()
@@ -407,18 +439,14 @@ def read_original_file_list(list_file):
         return all_lines
     except Exception as e:
         print(f"🔥 文件读取失败: {str(e)}")
-        print(f"请检查文件是否存在且格式正确: {list_file}")
+        print(f"⚠️ 请检查文件是否存在且格式正确: {list_file}")
         return None
 
 def process_item(item, target_dir, index, retry_attempts, stop_event, rename_files):
     """处理单个文件复制，添加stop_event参数用于终止，添加rename_files参数控制是否重命名"""
     original_name, search_name = item
-    # 根据是否需要重命名决定目标文件名
-    if rename_files:
-        dst_file = os.path.join(target_dir, f"{original_name}.STEP")
-    else:
-        # 先不确定文件名，找到源文件后再确定
-        dst_file = None
+    # 不在一开始确定 dst_file，等找到 src 后根据源后缀决定目标文件名（以便支持 XT/STP）
+    dst_file = None
     prefix_key = search_name[:4] if len(search_name) >= 4 else search_name
 
     # 检查是否需要停止
@@ -445,20 +473,27 @@ def process_item(item, target_dir, index, retry_attempts, stop_event, rename_fil
                         
                     try:
                         src_path = os.path.join(src_dir, src_filename)
-                        # 如果不需要重命名，使用源文件的文件名
-                        if not rename_files and dst_file is None:
-                            dst_file = os.path.join(target_dir, src_filename)
+                        # 根据源文件后缀决定重命名后缀（如果启用重命名）
+                        src_ext = os.path.splitext(src_filename)[1]  # 包含点，如 ".step" 或 ".xt" 或 ".x_t" 或 ".stp"
+                        if rename_files:
+                            # 保留之前对STEP的行为（使用大写扩展），对STP同样处理；XT也转换为大写形式
+                            ext_upper = src_ext.upper()
+                            # 规范 .x_t -> .X_T，.xt -> .XT，.stp -> .STP
+                            dst_file = os.path.join(target_dir, f"{original_name}{ext_upper}")
+                        else:
+                            if dst_file is None:
+                                dst_file = os.path.join(target_dir, src_filename)
                         shutil.copy2(src_path, dst_file)
                         return {
                             "status": "success",
                             "original": original_name,
-                            "copied": src_filename,
+                            "copied": os.path.basename(dst_file),
                             "source": src_dir,
                             "renamed_to": original_name if rename_files else None
                         }
                     except Exception as e:
                         if attempt < retry_attempts - 1:
-                            time.sleep(2 **attempt)
+                            time.sleep(2 ** attempt)
                         else:
                             return {
                                 "status": "error",
@@ -493,12 +528,13 @@ def worker(config, progress_callback, stop_event):
     max_workers = config["max_workers"]
     retry_attempts = config["retry_attempts"]
     rename_files = config.get("rename_files", False)  # 获取重命名选项
+    include_xt = config.get("include_xt_format", False)  # 获取XT包含选项
 
-    # 清理目标目录
-    cleanup_target_directory(target_dir)
+    # 清理目标目录（考虑XT）
+    cleanup_target_directory(target_dir, include_xt=include_xt)
 
-    # 构建文件索引
-    index = build_file_index(source_dirs)
+    # 构建文件索引（传入 include_xt）
+    index = build_file_index(source_dirs, include_xt=include_xt)
 
     # 读取待处理列表
     original_files = read_original_file_list(list_file)
@@ -513,7 +549,7 @@ def worker(config, progress_callback, stop_event):
     search_items = [(orig, clean_filename(orig)) for orig in original_files]
 
     # 多线程复制
-    print(f"📦 开始并行复制文件... {'(将按清单重命名)' if rename_files else ''}")
+    print(f"📦 开始并行复制文件... {'(将按清单重命名)' if rename_files else ''} {'(包含XT)' if include_xt else ''}")
     executor = ThreadPoolExecutor(max_workers=max_workers)
     # 传递rename_files参数
     futures = [executor.submit(process_item, item, target_dir, index, retry_attempts, stop_event, rename_files) 
@@ -561,23 +597,24 @@ def worker(config, progress_callback, stop_event):
         print("\n" + "=" * 60)
         print("📊 处理统计报告")
         print("=" * 60)
-        print(f"  总文件数: {total_files}")
-        print(f"  ✅ 成功复制: {found_count} ({found_count/max(1, total_files):.1%})")
-        print(f"  ❌ 未找到: {not_found_count} ({not_found_count/max(1, total_files):.1%})")
-        print(f"  ⚠️ 复制错误: {copy_errors}")
-        print(f"⏱️ 总耗时: {total_time:.1f}秒 | 平均速度: {total_files / max(1, total_time):.1f} 文件/秒")
-        print(f"  重命名模式: {'启用' if rename_files else '禁用'}")
+        print(f"📊   总文件数: {total_files}")
+        print(f"✅   成功复制: {found_count} ({found_count/max(1, total_files):.1%})")
+        print(f"❌   未找到: {not_found_count} ({not_found_count/max(1, total_files):.1%})")
+        print(f"⚠️   复制错误: {copy_errors}")
+        print(f"⏱️   总耗时: {total_time:.1f}秒 | 平均速度: {total_files / max(1, total_time):.1f} 文件/秒")
+        print(f"🔧   重命名模式: {'启用' if rename_files else '禁用'}")
+        print(f"🔧   包含 XT: {'是' if include_xt else '否'}")
         print("=" * 60)
 
         # 警告检查
         failure_rate = (not_found_count + copy_errors) / max(1, total_files)
         if failure_rate > 0.5:
             print(f"\n⚠️ 警告: 超过50%的文件处理失败 ({failure_rate:.1%})！")
-            print("可能的原因:")
-            print("  - 网络驱动器连接异常")
-            print("  - 源目录路径不正确")
-            print("  - 文件名不匹配")
-            print("请检查配置文件和网络连接状态")
+            print("⚠️ 可能的原因:")
+            print("⚠️   - 网络驱动器连接异常")
+            print("⚠️   - 源目录路径不正确")
+            print("⚠️   - 文件名不匹配")
+            print("⚠️ 请检查配置文件和网络连接状态")
 
         print(f"\n🎉 程序执行完成！")
     else:
@@ -667,7 +704,8 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(list_frame, text="原始清单文件:", width=100, font=("微软雅黑", 12)).pack(side="left")
         self.list_entry = ctk.CTkEntry(list_frame, width=200, font=("微软雅黑", 12))
         self.list_entry.pack(side="left", padx=(10, 0))
-        self.list_entry.insert(0, self.config_data.get("original_list_filename", "Original file list.csv"))
+        # 默认改为 txt
+        self.list_entry.insert(0, self.config_data.get("original_list_filename", "Original file list.txt"))
         
         # 复制日志文件名
         log_frame = ctk.CTkFrame(basic_frame, fg_color="transparent")
@@ -707,6 +745,17 @@ class SettingsWindow(ctk.CTkToplevel):
             rename_frame, 
             text="按照清单重命名3D文件", 
             variable=self.rename_var,
+            font=("微软雅黑", 12)
+        ).pack(anchor="w")
+        
+        # 添加包含 XT 格式选项
+        xt_frame = ctk.CTkFrame(perf_frame, fg_color="transparent")
+        xt_frame.pack(fill="x", padx=15, pady=(0, 10))
+        self.include_xt_var = ctk.BooleanVar(value=self.config_data.get("include_xt_format", False))
+        ctk.CTkCheckBox(
+            xt_frame,
+            text="包含 XT 格式3D文件",
+            variable=self.include_xt_var,
             font=("微软雅黑", 12)
         ).pack(anchor="w")
         
@@ -820,6 +869,7 @@ class SettingsWindow(ctk.CTkToplevel):
             self.config_data["retry_attempts"] = retry_attempts
             self.config_data["source_dirs"] = source_dirs
             self.config_data["rename_files"] = self.rename_var.get()  # 保存重命名选项
+            self.config_data["include_xt_format"] = self.include_xt_var.get()  # 保存XT选项
             
             # 调用保存回调
             if self.on_save_callback:
@@ -930,7 +980,7 @@ class ListManagerWindow(ctk.CTkToplevel):
             with open(self.list_file_path, "w", encoding="utf-8-sig") as f:
                 f.write(content)
             
-            # 调用保存回调
+            # 在保存前（即重新加载前）可以通过回调触发宿主清理日志
             if self.on_save_callback:
                 self.on_save_callback()
             
@@ -1160,6 +1210,17 @@ class BatchCopyGUI(ctk.CTk):
         )
         self.rename_checkbox.pack(anchor="w", pady=(10, 0))
         
+        # 添加包含 XT 复选框（主界面快捷）
+        self.include_xt_checkbox_var = ctk.BooleanVar(value=False)
+        self.include_xt_checkbox = ctk.CTkCheckBox(
+            file_section,
+            text="包含 XT 格式3D文件",
+            variable=self.include_xt_checkbox_var,
+            font=("微软雅黑", 12),
+            command=self._on_include_xt_change
+        )
+        self.include_xt_checkbox.pack(anchor="w", pady=(6, 0))
+        
         # 操作按钮区
         btn_section = ctk.CTkFrame(left_panel, fg_color="transparent")
         btn_section.pack(fill="x", padx=15, pady=(0, 15))
@@ -1306,6 +1367,17 @@ class BatchCopyGUI(ctk.CTk):
             self.config_data["rename_files"] = self.rename_checkbox_var.get()
             save_configuration(self.config_path, self.config_data)
             # 重新加载配置以确保一致性
+            # 在重新加载前清空日志（需求 A）
+            self._clear_log()
+            self.config_data = load_configuration(self.config_path)
+    
+    def _on_include_xt_change(self):
+        """包含 XT 选项变更时立即保存配置（主界面快捷复选）"""
+        if self.config_data and self.config_path:
+            self.config_data["include_xt_format"] = self.include_xt_checkbox_var.get()
+            save_configuration(self.config_path, self.config_data)
+            # 在重新加载前清空日志（需求 A）
+            self._clear_log()
             self.config_data = load_configuration(self.config_path)
     
     def _change_appearance_mode_event(self, new_appearance_mode: str):
@@ -1359,6 +1431,7 @@ class BatchCopyGUI(ctk.CTk):
                 self.running = False
                 self.start_btn.configure(state="normal")
                 self.stop_btn.configure(state="disabled")
+                self.list_manager_btn.configure(state="normal")
                 
                 # 如果任务完成且成功，更新按钮状态
                 if item[1]:
@@ -1369,7 +1442,9 @@ class BatchCopyGUI(ctk.CTk):
         self.after(100, self._listen_queues)
     
     def _auto_load_files(self):
-        """自动加载默认配置文件"""
+        """自动加载默认配置文件（在加载前自动清空日志，满足需求 A）"""
+        # 在自动加载前清空日志
+        self._clear_log()
         root_path = get_root_path()
         default_config = os.path.join(root_path, "config.ini")
         
@@ -1381,10 +1456,14 @@ class BatchCopyGUI(ctk.CTk):
             if self.config_data:
                 # 更新重命名选项
                 self.rename_checkbox_var.set(self.config_data.get("rename_files", False))
+                # 更新包含XT选项
+                self.include_xt_checkbox_var.set(self.config_data.get("include_xt_format", False))
                 
-                # 检查默认的清单文件是否存在
+                # 检查默认的清单文件是否存在（在设置前已清空日志）
                 default_list = self.config_data.get("list_file")
                 if os.path.exists(default_list):
+                    # 在加载清单前再次清空日志（确保清单加载时干净）
+                    self._clear_log()
                     self.list_file_path = default_list
                     self.list_label.configure(text=os.path.basename(default_list))
                     # 启用清单管理按钮
@@ -1426,7 +1505,7 @@ class BatchCopyGUI(ctk.CTk):
             # 无法获取或已是最新版本
             if is_manual:
                 messagebox.showinfo("更新提示", download_url)
-            print(f"版本检查结果: {download_url}")
+            print(f"ℹ️ 版本检查结果: {download_url}")
             
     def update_program(self, latest_version, download_url):
         """执行更新操作"""
@@ -1443,13 +1522,15 @@ class BatchCopyGUI(ctk.CTk):
                 webbrowser.open(PROJECT_URL)
     
     def _select_config(self):
-        """选择配置文件"""
+        """选择配置文件（在加载前清空日志，满足需求 A）"""
         file_path = filedialog.askopenfilename(
             title="选择配置文件",
             filetypes=[("INI文件", "*.ini"), ("所有文件", "*.*")]
         )
         
         if file_path:
+            # 在加载前清空日志
+            self._clear_log()
             self.config_path = file_path
             self.config_label.configure(text=os.path.basename(file_path))
             self.config_data = load_configuration(file_path)
@@ -1457,10 +1538,13 @@ class BatchCopyGUI(ctk.CTk):
             if self.config_data:
                 # 更新重命名选项
                 self.rename_checkbox_var.set(self.config_data.get("rename_files", False))
+                self.include_xt_checkbox_var.set(self.config_data.get("include_xt_format", False))
                 
-                # 检查是否有对应的清单文件
+                # 检查是否有对应的清单文件（在加载前已清空日志）
                 list_file = self.config_data.get("list_file")
                 if os.path.exists(list_file):
+                    # 清单加载前清空日志
+                    self._clear_log()
                     self.list_file_path = list_file
                     self.list_label.configure(text=os.path.basename(list_file))
                     # 启用清单管理按钮
@@ -1472,13 +1556,15 @@ class BatchCopyGUI(ctk.CTk):
                 self.start_btn.configure(state="disabled")
     
     def _select_list_file(self):
-        """选择原始清单文件"""
+        """选择原始清单文件（在选择前清空日志，满足需求 A）"""
         file_path = filedialog.askopenfilename(
             title="选择原始清单文件",
-            filetypes=[("CSV文件", "*.csv"), ("TXT文件", "*.txt"), ("所有文件", "*.*")]
+            filetypes=[("TXT文件", "*.txt"), ("CSV文件", "*.csv"), ("所有文件", "*.*")]
         )
         
         if file_path:
+            # 在加载前清空日志
+            self._clear_log()
             self.list_file_path = file_path
             self.list_label.configure(text=os.path.basename(file_path))
             # 启用清单管理按钮
@@ -1499,12 +1585,13 @@ class BatchCopyGUI(ctk.CTk):
             self.config_data = {
                 "drive_letter": "D",
                 "target_dir_name": "Target",
-                "original_list_filename": "Original file list.csv",
+                "original_list_filename": "Original file list.txt",
                 "log_filename": "log.csv",
                 "max_workers": 12,
                 "retry_attempts": 3,
                 "source_dirs": [],
-                "rename_files": False
+                "rename_files": False,
+                "include_xt_format": False
             }
         
         # 创建配置窗口
@@ -1516,7 +1603,9 @@ class BatchCopyGUI(ctk.CTk):
         settings_window.focus()
     
     def _on_settings_saved(self, config_data):
-        """配置保存后的回调函数"""
+        """配置保存后的回调函数（在重新加载前清空日志，满足需求 A）"""
+        # 在重新加载配置前清空日志
+        self._clear_log()
         if not self.config_path:
             # 如果之前没有配置文件路径，使用默认路径
             root_path = get_root_path()
@@ -1531,10 +1620,12 @@ class BatchCopyGUI(ctk.CTk):
         if self.config_data:
             # 更新界面上的重命名选项
             self.rename_checkbox_var.set(self.config_data.get("rename_files", False))
+            self.include_xt_checkbox_var.set(self.config_data.get("include_xt_format", False))
             
-            # 更新清单文件显示
+            # 更新清单文件显示（加载清单前再次清空日志）
             list_file = self.config_data.get("list_file")
             if os.path.exists(list_file):
+                self._clear_log()
                 self.list_file_path = list_file
                 self.list_label.configure(text=os.path.basename(list_file))
                 # 启用清单管理按钮
@@ -1561,9 +1652,11 @@ class BatchCopyGUI(ctk.CTk):
         list_manager_window.focus()
     
     def _on_list_saved(self):
-        """清单保存后的回调函数"""
+        """清单保存后的回调函数（在重新加载前清空日志，满足需求 A）"""
         # 在日志中显示保存提示
         print(f"✅ 清单文件已保存: {self.list_file_path}")
+        # 在重新加载前清空日志
+        self._clear_log()
         print("🔄 正在重新加载清单文件...")
         
         # 重新加载清单文件
@@ -1575,10 +1668,13 @@ class BatchCopyGUI(ctk.CTk):
                 print("⚠️ 清单文件重新加载失败")
     
     def _start_process(self):
-        """开始批量复制过程"""
+        """开始批量复制过程（在开始前清空日志，满足需求 A）"""
         if not self.config_data or not self.list_file_path:
             messagebox.showwarning("警告", "请先选择配置文件和清单文件")
             return
+        
+        # 在开始任务前清空日志
+        self._clear_log()
         
         # 检查目标目录是否存在，不存在则创建
         target_dir = self.config_data.get("target_dir")
@@ -1600,6 +1696,14 @@ class BatchCopyGUI(ctk.CTk):
         
         # 重置停止事件
         self.stop_event.clear()
+        
+        # 将主界面上的 include_xt 选项同步回 config_data（以防用户使用主界面复选）
+        if self.config_data is not None:
+            self.config_data["include_xt_format"] = self.include_xt_checkbox_var.get()
+            self.config_data["rename_files"] = self.rename_checkbox_var.get()
+            # 保存到磁盘，确保 worker 能读取到最新设置
+            if self.config_path:
+                save_configuration(self.config_path, self.config_data)
         
         # 启动工作线程
         self.worker_thread = threading.Thread(
@@ -1649,9 +1753,13 @@ class BatchCopyGUI(ctk.CTk):
     
     def _clear_log(self):
         """清空日志文本框"""
-        self.log_textbox.configure(state="normal")
-        self.log_textbox.delete("1.0", "end")
-        self.log_textbox.configure(state="disabled")
+        try:
+            self.log_textbox.configure(state="normal")
+            self.log_textbox.delete("1.0", "end")
+            self.log_textbox.configure(state="disabled")
+        except Exception:
+            # 如果 GUI 尚未初始化或其他异常，忽略
+            pass
     
     def on_closing(self):
         """窗口关闭事件处理"""
