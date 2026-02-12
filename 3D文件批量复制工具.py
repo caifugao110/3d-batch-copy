@@ -116,7 +116,16 @@ def check_for_updates():
 def run_update_bat(download_url):
     """创建并运行 bat 脚本进行更新和重启"""
     root_path = get_root_path()
-    exe_name = os.path.basename(sys.executable)
+    
+    # 检测是否在IDE中运行（sys.executable指向Python解释器）
+    is_in_ide = not hasattr(sys, '_MEIPASS') and ('python.exe' in sys.executable.lower() or 'pythonw.exe' in sys.executable.lower())
+    
+    if is_in_ide:
+        messagebox.showwarning("更新提示", "从IDE运行时无法自动更新。请编译为exe后再使用更新功能，或手动下载更新包。")
+        return
+    
+    # 确保使用固定的应用程序名称
+    exe_name = "3D文件批量复制工具.exe"
     bat_path = os.path.join(root_path, "update_script.bat")
     
     download_filename = download_url.split('/')[-1]
@@ -193,7 +202,7 @@ if exist "!ROOT_PATH!\Original file list.txt" (
 )
 
 REM 构建 robocopy 命令
-set "ROBOCOPY_CMD=robocopy "!SOURCE_DIR!" "!ROOT_PATH!" /E /XO /R:3 /W:2 /NFL /NDL /NJH /NJS"
+set "ROBOCOPY_CMD=robocopy "!SOURCE_DIR!" "!ROOT_PATH!" /E /IS /IT /R:3 /W:2 /NFL /NDL /NJH /NJS"
 if not "!EXCLUDE_FILES!"=="" (
     set "ROBOCOPY_CMD=!ROBOCOPY_CMD! /XF!EXCLUDE_FILES!"
 )

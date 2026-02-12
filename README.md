@@ -4,7 +4,6 @@
 > **作者**：Tobin © 2026  
 > **项目地址**：[GitHub 项目主页](https://github.com/caifugao110/3d-batch-copy)  
 > **使用文档地址**：[在线帮助文档](https://caifugao110.github.io/3d-batch-copy/)  
-> **当前版本**：V1.2.1
 
 ---
 

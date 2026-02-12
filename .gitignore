@@ -7,3 +7,6 @@ Copy step list.csv
 # PyInstaller 打包输出目录
 exe/3D文件批量复制工具/
 
+# 打包生成的 ZIP 文件
+exe/3D文件批量复制工具.zip
+
