@@ -19,8 +19,8 @@ import requests
 import re
 
 # 版本和版权信息
-VERSION = "V1.1.19"
-COPYRIGHT = "Tobin © 2025"
+VERSION = "V1.2.1"
+COPYRIGHT = "Tobin © 2026"
 PROJECT_URL = "https://github.com/caifugao110/3d-batch-copy"
 
 # 全局队列：用于子线程与GUI线程通信
@@ -119,77 +119,109 @@ def run_update_bat(download_url):
     exe_name = os.path.basename(sys.executable)
     bat_path = os.path.join(root_path, "update_script.bat")
     
-    # 提取下载文件名
     download_filename = download_url.split('/')[-1]
     
-    # 增强版批处理脚本，解决文件锁定和替换问题
     bat_content = fr"""@echo off
 setlocal EnableDelayedExpansion
 set "DOWNLOAD_URL={download_url}"
 set "EXE_NAME={exe_name}"
 set "ROOT_PATH={root_path}"
 set "TEMP_ZIP_NAME={download_filename}"
-set "TEMP_ZIP_PATH=!ROOT_PATH!\\!TEMP_ZIP_NAME!"  # 在f字符串前加r，变成原始字符串
+set "TEMP_ZIP_PATH=!ROOT_PATH!\!TEMP_ZIP_NAME!"
 
-echo 正在下载新版本压缩包...
+echo ========================================
+echo    3D文件批量复制工具 - 自动更新程序
+echo ========================================
+echo.
+
+echo [1/5] 正在下载新版本压缩包...
 powershell.exe -Command "& {{ $ProgressPreference = 'SilentlyContinue'; try {{ Invoke-WebRequest -Uri '!DOWNLOAD_URL!' -OutFile '!TEMP_ZIP_PATH!' -UseBasicParsing; exit 0; }} catch {{ Write-Error $_.Exception.Message; exit 1; }} }}"
 if %errorlevel% neq 0 (
-    echo 下载失败，请检查网络连接
+    echo [错误] 下载失败，请检查网络连接
     pause
     exit /b 1
 )
+echo [完成] 下载成功
 
-echo 等待主程序退出...
+echo.
+echo [2/5] 等待主程序退出...
 :WAIT_LOOP
 tasklist /FI "IMAGENAME eq !EXE_NAME!" 2>NUL | find /I /N "!EXE_NAME!">NUL
 if "%ERRORLEVEL%"=="0" (
     timeout /t 1 /nobreak >nul
     goto WAIT_LOOP
 )
+echo [完成] 主程序已退出
 
-echo 正在解压更新文件...
-REM 创建临时解压目录
-set "TEMP_EXTRACT_DIR=!ROOT_PATH!\\temp_extract"
+echo.
+echo [3/5] 正在解压更新文件...
+set "TEMP_EXTRACT_DIR=!ROOT_PATH!\temp_extract_!RANDOM!"
 mkdir "!TEMP_EXTRACT_DIR!" 2>nul
 
-REM 解压到临时目录
 powershell.exe -Command "& {{ try {{ Expand-Archive -Path '!TEMP_ZIP_PATH!' -DestinationPath '!TEMP_EXTRACT_DIR!' -Force; exit 0; }} catch {{ Write-Error $_.Exception.Message; exit 1; }} }}"
 if %errorlevel% neq 0 (
-    echo 解压失败
+    echo [错误] 解压失败
     pause
     exit /b 1
 )
+echo [完成] 解压成功
 
-REM 复制文件，排除需要保留的配置文件
-echo 复制更新文件...
-for /R "!TEMP_EXTRACT_DIR!" %%f in (*) do (
-    set "filename=%%~nxf"
-    set "relpath=%%f"
-    set "relpath=!relpath:!TEMP_EXTRACT_DIR!\=!"
-    set "destpath=!ROOT_PATH!\\!relpath!"
-    
-    REM 检查是否为需要排除的文件
-    if /I not "!filename!"=="config.ini" (
-        if /I not "!filename!"=="Original file list.txt" (
-            echo 更新: !relpath!
-            copy /Y "%%f" "!destpath!" >nul
-        ) else (
-            echo 保留: !relpath!
-        )
-    ) else (
-        echo 保留: !relpath!
+echo.
+echo [4/5] 正在复制更新文件...
+REM 查找解压后的实际内容目录（可能有一层顶层目录）
+set "SOURCE_DIR="
+for /d %%d in ("!TEMP_EXTRACT_DIR!\*") do (
+    if exist "%%d\!EXE_NAME!" (
+        set "SOURCE_DIR=%%d"
     )
 )
+if "!SOURCE_DIR!"=="" (
+    set "SOURCE_DIR=!TEMP_EXTRACT_DIR!"
+)
 
-REM 清理临时目录和文件
-echo 清理临时文件...
+echo 源目录: !SOURCE_DIR!
+echo 目标目录: !ROOT_PATH!
+echo.
+
+REM 检查本地文件是否存在，决定是否排除
+set "EXCLUDE_FILES="
+if exist "!ROOT_PATH!\config.ini" (
+    set "EXCLUDE_FILES=!EXCLUDE_FILES! config.ini"
+)
+if exist "!ROOT_PATH!\Original file list.txt" (
+    set "EXCLUDE_FILES=!EXCLUDE_FILES! "Original file list.txt""
+)
+
+REM 构建 robocopy 命令
+set "ROBOCOPY_CMD=robocopy "!SOURCE_DIR!" "!ROOT_PATH!" /E /XO /R:3 /W:2 /NFL /NDL /NJH /NJS"
+if not "!EXCLUDE_FILES!"=="" (
+    set "ROBOCOPY_CMD=!ROBOCOPY_CMD! /XF!EXCLUDE_FILES!"
+)
+set "ROBOCOPY_CMD=!ROBOCOPY_CMD! /XD "copystep""
+
+echo 执行命令: !ROBOCOPY_CMD!
+echo.
+
+!ROBOCOPY_CMD!
+if %errorlevel% leq 7 (
+    echo [完成] 文件复制成功
+) else (
+    echo [警告] 复制过程中可能有部分文件失败，错误代码: %errorlevel%
+)
+
+echo.
+echo [5/5] 清理临时文件...
 rmdir /S /Q "!TEMP_EXTRACT_DIR!" 2>nul
 del "!TEMP_ZIP_PATH!" 2>nul
+echo [完成] 临时文件已清理
 
-echo 重启应用程序...
-start "" "!ROOT_PATH!\\!EXE_NAME!"
+echo.
+echo ========================================
+echo    更新完成，正在重启应用程序...
+echo ========================================
+start "" "!ROOT_PATH!\!EXE_NAME!"
 
-echo 清理更新脚本...
+REM 延迟删除更新脚本
 ping 127.0.0.1 -n 3 >nul
 del "%~f0" >nul 2>&1
 exit /b 0
@@ -199,13 +231,11 @@ exit /b 0
         with open(bat_path, "w", encoding="gbk") as f:
             f.write(bat_content)
         
-        # 使用更可靠的方式启动批处理
         subprocess.Popen(
             ["cmd.exe", "/c", bat_path],
             creationflags=subprocess.CREATE_NEW_CONSOLE,
             close_fds=True
         )
-        # 立即退出主程序，释放文件锁
         sys.exit(0)
     
     except Exception as e:
@@ -243,7 +273,6 @@ def load_configuration(config_path):
         config.read(config_path, encoding='utf-8')
 
         # 读取路径配置
-        drive_letter = config.get("Paths", "drive_letter").strip()
         target_dir_name = config.get("Paths", "target_dir_name")
         original_list_filename = config.get("Paths", "original_list_file")
         log_filename = config.get("Paths", "log_file")
@@ -257,8 +286,7 @@ def load_configuration(config_path):
         root_path = get_root_path()
         source_dirs = []
         for key in config["SourceDirectories"]:
-            relative_path = config.get("SourceDirectories", key)
-            full_path = f"{drive_letter}:\\{relative_path}"
+            full_path = config.get("SourceDirectories", key)
             source_dirs.append(full_path)
         
         target_dir = os.path.join(root_path, target_dir_name)
@@ -270,7 +298,6 @@ def load_configuration(config_path):
         retry_attempts = config.getint("Settings", "retry_attempts", fallback=3)
 
         print(f"✅ 配置加载成功:")
-        print(f"   映射的驱动器盘符: {drive_letter}")
         print(f"   源目录数量: {len(source_dirs)}")
         print(f"   目标目录: {target_dir}")
         print(f"   待处理列表: {list_file}")
@@ -288,7 +315,6 @@ def load_configuration(config_path):
             "max_workers": max_workers,
             "retry_attempts": retry_attempts,
             "original_list_filename": original_list_filename,
-            "drive_letter": drive_letter,
             "target_dir_name": target_dir_name,
             "log_filename": log_filename,
             "config_path": config_path,
@@ -308,7 +334,6 @@ def save_configuration(config_path, config_data):
         
         # 保存基本配置
         config["Paths"] = {
-            "drive_letter": config_data.get("drive_letter", "D"),
             "target_dir_name": config_data.get("target_dir_name", "Target"),
             # 统一为 txt 默认
             "original_list_file": config_data.get("original_list_filename", "Original file list.txt"),
@@ -325,12 +350,7 @@ def save_configuration(config_path, config_data):
         # 保存源目录
         config["SourceDirectories"] = {}
         for idx, src_dir in enumerate(config_data.get("source_dirs", []), 1):
-            # 提取相对路径（假设格式为 D:\path\to\dir）
-            if ":\\" in src_dir:
-                rel_path = src_dir.split(":\\", 1)[1]
-            else:
-                rel_path = src_dir
-            config["SourceDirectories"][f"source_{idx}"] = rel_path
+            config["SourceDirectories"][f"source_{idx}"] = src_dir
         
         with open(config_path, "w", encoding="utf-8") as f:
             config.write(f)
@@ -658,17 +678,12 @@ class SettingsWindow(ctk.CTkToplevel):
         self.geometry("700x800")
         self.config_data = config_data.copy() if config_data else {}
         self.on_save_callback = on_save_callback
-        self.original_drive_letter = self.config_data.get("drive_letter", "D")
         
         # 使窗口模态化
         self.transient(parent)
         self.grab_set()
         
         self._init_widgets()
-        
-        # 绑定驱动器盘符变化事件
-        self.drive_entry.bind("<FocusOut>", self._on_drive_letter_change)
-        self.drive_entry.bind("<Return>", self._on_drive_letter_change)
         
     def _init_widgets(self):
         """初始化配置窗口组件"""
@@ -681,14 +696,6 @@ class SettingsWindow(ctk.CTkToplevel):
         basic_frame.pack(fill="x", pady=(0, 15))
         
         ctk.CTkLabel(basic_frame, text="基本设置", font=("微软雅黑", 16, "bold")).pack(anchor="w", padx=15, pady=(10, 5))
-        
-        # 驱动器盘符
-        drive_frame = ctk.CTkFrame(basic_frame, fg_color="transparent")
-        drive_frame.pack(fill="x", padx=15, pady=5)
-        ctk.CTkLabel(drive_frame, text="\\\\192.168.160.2\\生产管理部3d\\3D 资料 映射的盘符:", width=100, font=("微软雅黑", 12)).pack(side="left")
-        self.drive_entry = ctk.CTkEntry(drive_frame, width=200, font=("微软雅黑", 12))
-        self.drive_entry.pack(side="left", padx=(10, 0))
-        self.drive_entry.insert(0, self.config_data.get("drive_letter", "D"))
         
         # 目标目录名
         target_frame = ctk.CTkFrame(basic_frame, fg_color="transparent")
@@ -792,36 +799,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkButton(footer_frame, text="保存配置", width=150, font=("微软雅黑", 12), command=self._save_config).pack(side="right", padx=5)
         ctk.CTkButton(footer_frame, text="取消", width=150, font=("微软雅黑", 12), command=self.destroy).pack(side="right", padx=5)
     
-    def _on_drive_letter_change(self, event=None):
-        """当驱动器盘符改变时，更新源目录中的盘符"""
-        new_drive = self.drive_entry.get().strip().upper()
-        if not new_drive or new_drive == self.original_drive_letter:
-            return
-            
-        # 获取当前所有源目录
-        content = self.source_listbox.get("1.0", "end").strip()
-        if not content:
-            self.original_drive_letter = new_drive
-            return
-            
-        # 替换每个目录的盘符
-        updated_dirs = []
-        for line in content.split("\n"):
-            line = line.strip()
-            if line and ":\\" in line:
-                # 分割盘符和路径
-                _, path = line.split(":\\", 1)
-                updated_dir = f"{new_drive}:\\{path}"
-                updated_dirs.append(updated_dir)
-            else:
-                updated_dirs.append(line)
-        
-        # 更新列表框内容
-        self.source_listbox.delete("1.0", "end")
-        for dir_path in updated_dirs:
-            self.source_listbox.insert("end", dir_path + "\n")
-            
-        self.original_drive_letter = new_drive
+
     
     def _add_source_dir(self):
         """添加源目录"""
@@ -861,7 +839,6 @@ class SettingsWindow(ctk.CTkToplevel):
                 source_dirs = [line.strip() for line in content.split("\n") if line.strip()]
             
             # 更新配置数据
-            self.config_data["drive_letter"] = self.drive_entry.get().strip()
             self.config_data["target_dir_name"] = self.target_entry.get().strip()
             self.config_data["original_list_filename"] = self.list_entry.get().strip()
             self.config_data["log_filename"] = self.log_entry.get().strip()
@@ -1583,7 +1560,6 @@ class BatchCopyGUI(ctk.CTk):
         """打开配置管理窗口"""
         if not self.config_data:
             self.config_data = {
-                "drive_letter": "D",
                 "target_dir_name": "Target",
                 "original_list_filename": "Original file list.txt",
                 "log_filename": "log.csv",

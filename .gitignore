@@ -1,0 +1,9 @@
+# 复制输出目录
+copystep/
+
+# 复制列表文件
+Copy step list.csv
+
+# PyInstaller 打包输出目录
+exe/3D文件批量复制工具/
+
