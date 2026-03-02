@@ -19,7 +19,7 @@ import requests
 import re
 
 # 版本和版权信息
-VERSION = "V1.2.1"
+VERSION = "V1.2.3"
 COPYRIGHT = "Tobin © 2026"
 PROJECT_URL = "https://github.com/caifugao110/3d-batch-copy"
 
@@ -1497,8 +1497,54 @@ class BatchCopyGUI(ctk.CTk):
         """执行更新操作"""
         if platform.system() == "Windows":
             # Windows 系统使用 bat 脚本更新
-            messagebox.showinfo("开始更新", "程序将退出并启动自动更新程序，请稍候...")
-            run_update_bat(download_url)
+            # 创建自定义自动关闭窗口
+            update_window = ctk.CTkToplevel(self)
+            update_window.title("开始更新")
+            update_window.geometry("400x150")
+            update_window.resizable(False, False)
+            
+            # 使窗口居中
+            update_window.update_idletasks()
+            width = update_window.winfo_width()
+            height = update_window.winfo_height()
+            x = (update_window.winfo_screenwidth() // 2) - (width // 2)
+            y = (update_window.winfo_screenheight() // 2) - (height // 2)
+            update_window.geometry(f"{width}x{height}+{x}+{y}")
+            
+            # 设置窗口样式
+            main_frame = ctk.CTkFrame(update_window, fg_color="transparent")
+            main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+            
+            # 信息图标
+            icon_label = ctk.CTkLabel(
+                main_frame, 
+                text="ℹ", 
+                font=("微软雅黑", 48),
+                text_color="#3498db"
+            )
+            icon_label.pack(pady=(0, 10))
+            
+            # 提示信息
+            message_label = ctk.CTkLabel(
+                main_frame, 
+                text="程序将退出并启动自动更新程序，请稍候...",
+                font=("微软雅黑", 14),
+                text_color=update_window._fg_color,  # 自适应主题颜色
+                wraplength=350
+            )
+            message_label.pack(pady=(0, 15))
+            
+            # 确保窗口显示在最前面
+            update_window.transient(self)
+            update_window.grab_set()
+            update_window.attributes("-topmost", True)
+            
+            # 2秒后自动关闭窗口并执行更新
+            def close_and_update():
+                update_window.destroy()
+                run_update_bat(download_url)
+            
+            update_window.after(2000, close_and_update)
         else:
             # 非 Windows 系统，提示用户手动下载
             if messagebox.askyesno(
