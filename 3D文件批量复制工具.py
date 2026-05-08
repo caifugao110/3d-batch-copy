@@ -19,7 +19,7 @@ import requests
 import re
 
 # 版本和版权信息
-VERSION = "V1.2.3"
+VERSION = "V1.2.4"
 COPYRIGHT = "Tobin © 2026"
 PROJECT_URL = "https://github.com/caifugao110/3d-batch-copy"
 
@@ -43,39 +43,55 @@ def get_root_path():
         return os.path.dirname(os.path.abspath(__file__))
 
 def get_latest_version():
-    """从Gitee Releases API获取最新版本号"""
-    api_url = "https://gitee.com/api/v5/repos/caifugao110/3d-batch-copy/tags"
-    # 添加Gitee认证token
+    """从Gitee Releases API获取最新版本号和更新内容，返回 (版本标签名, 更新内容) 或 (None, None)"""
+    api_url = "https://gitee.com/api/v5/repos/caifugao110/3d-batch-copy/releases"
     headers = {
         "Authorization": "token a09da64c1d9e9c7420a18dfd838890b0"
     }
     try:
-        # 在请求中加入headers参数
         response = requests.get(api_url, headers=headers, timeout=5)
         response.raise_for_status()
-        tags = response.json()
+        releases = response.json()
         
-        version_pattern = re.compile(r'v(\d+\.\d+\.\d+)', re.IGNORECASE)
+        version_pattern = re.compile(r'v?(\d+\.\d+\.\d+)', re.IGNORECASE)
         versions = []
         
-        for tag in tags:
-            match = version_pattern.search(tag['name'])
+        for release in releases:
+            tag_name = release.get('tag_name', '')
+            match = version_pattern.search(tag_name)
             if match:
                 version_str = match.group(1)
-                # 转换为元组以便比较 (主版本, 次版本, 修订号)
                 version_tuple = tuple(map(int, version_str.split('.')))
-                versions.append((version_tuple, tag['name']))
+                # 直接获取该 tag 的提交记录作为更新内容
+                changelog = "暂无更新说明"
+                try:
+                    commit_url = f"https://gitee.com/api/v5/repos/caifugao110/3d-batch-copy/commits/{tag_name}"
+                    commit_resp = requests.get(commit_url, headers=headers, timeout=5)
+                    commit_resp.raise_for_status()
+                    commit_data = commit_resp.json()
+                    changelog = commit_data.get('commit', {}).get('message', '').strip() or "暂无更新说明"
+                except Exception as ce:
+                    print(f"获取提交信息失败: {str(ce)}")
+                    # 如果获取提交失败，回退用 Release 内容
+                    body = release.get('body', '')
+                    match_info = re.search(r'最后提交信息为.*?[:：]\s*(.*)', body, re.DOTALL)
+                    if match_info:
+                        extracted = match_info.group(1).strip()
+                        if extracted:
+                            changelog = extracted
+                versions.append((version_tuple, tag_name, changelog))
         
         if not versions:
-            return None
+            return None, None
             
-        # 按版本号降序排序，取最新版本
         versions.sort(reverse=True, key=lambda x: x[0])
-        return versions[0][1]  # 返回完整的版本标签名，如"v1.2.0"
+        return versions[0][1], versions[0][2]
         
     except Exception as e:
         print(f"⚠️ 检查更新失败: {str(e)}")
-        return None
+        import traceback
+        print(traceback.format_exc())
+        return None, None
 
 def compare_versions(current_version, latest_version):
     """比较版本号，返回True如果有新版本"""
@@ -100,18 +116,16 @@ def compare_versions(current_version, latest_version):
         return False
 
 def check_for_updates():
-    """检查是否有更新"""
-    latest_version = get_latest_version()
+    """检查是否有更新，返回 (版本号, 下载链接, 更新内容) 或 (None, 提示信息, None)"""
+    latest_version, changelog = get_latest_version()
     if not latest_version:
-        return None, "无法获取最新版本信息"
+        return None, "无法获取最新版本信息", None
         
     if compare_versions(VERSION, latest_version):
-        # 假设下载链接的格式与 caokao.py 中一致
-        # 改为 ZIP 文件下载链接，以支持 One-Folder 模式更新
         download_url = f"https://gitee.com/caifugao110/3d-batch-copy/releases/download/{latest_version}/3D文件批量复制工具.zip"
-        return latest_version, download_url
+        return latest_version, download_url, changelog
     else:
-        return None, "当前已是最新版本"
+        return None, "当前已是最新版本", None
 
 def run_update_bat(download_url):
     """创建并运行 bat 脚本进行更新和重启"""
@@ -672,12 +686,19 @@ class StdoutRedirector:
     """重定向stdout到GUI的Text组件"""
     def __init__(self, text_widget):
         self.text_widget = text_widget
+        self.buffer = []
 
     def write(self, message):
-        log_queue.put(message)
+        # 缓冲消息，避免频繁的队列操作
+        self.buffer.append(message)
+        # 如果有换行符或者缓冲区过大，就放入队列
+        if '\n' in message or len(''.join(self.buffer)) > 1000:
+            self.flush()
 
     def flush(self):
-        pass
+        if self.buffer:
+            log_queue.put(''.join(self.buffer))
+            self.buffer = []
 
 class SettingsWindow(ctk.CTkToplevel):
     """配置管理窗口"""
@@ -1380,13 +1401,18 @@ class BatchCopyGUI(ctk.CTk):
     
     def _listen_queues(self):
         """监听日志和进度队列，更新GUI"""
+        # 每次最多处理50条日志消息，避免长时间阻塞
+        max_messages_per_batch = 50
+        log_count = 0
+        
         # 处理日志队列
-        while not log_queue.empty():
+        while not log_queue.empty() and log_count < max_messages_per_batch:
             message = log_queue.get()
             self.log_textbox.configure(state="normal")
             self.log_textbox.insert("end", message)
             self.log_textbox.see("end")
             self.log_textbox.configure(state="disabled")
+            log_count += 1
         
         # 处理进度队列
         while not progress_queue.empty():
@@ -1414,6 +1440,10 @@ class BatchCopyGUI(ctk.CTk):
                     text=f"已处理: {current} | 成功: {self.success_count} | 失败: {self.failure_count} | 速度: {speed:.1f} 文件/秒"
                 )
             elif item[0] == "complete":
+                # 任务完成，确保刷新缓冲区
+                if hasattr(sys.stdout, 'flush'):
+                    sys.stdout.flush()
+                
                 self.running = False
                 self.start_btn.configure(state="normal")
                 self.stop_btn.configure(state="disabled")
@@ -1424,8 +1454,11 @@ class BatchCopyGUI(ctk.CTk):
                     self.open_target_btn.configure(state="normal")
                     self.view_log_btn.configure(state="normal")
         
-        # 继续监听
-        self.after(100, self._listen_queues)
+        # 继续监听 - 如果还有日志消息，加快监听频率
+        if not log_queue.empty():
+            self.after(20, self._listen_queues)  # 还有消息，20ms后继续处理
+        else:
+            self.after(100, self._listen_queues)  # 没有消息，100ms后检查
     
     def _auto_load_files(self):
         """自动加载默认配置文件（在加载前自动清空日志，满足需求 A）"""
@@ -1469,26 +1502,25 @@ class BatchCopyGUI(ctk.CTk):
 
     def _check_update_thread(self, is_manual=False):
         """在单独线程中执行更新检查"""
-        latest_version, download_url = check_for_updates()
+        latest_version, download_url, changelog = check_for_updates()
         
-        # 使用 after 方法将结果传回主线程处理 GUI 交互
-        self.after(0, lambda: self._handle_update_result(latest_version, download_url, is_manual))
+        self.after(0, lambda: self._handle_update_result(latest_version, download_url, changelog, is_manual))
 
-    def _handle_update_result(self, latest_version, download_url, is_manual):
+    def _handle_update_result(self, latest_version, download_url, changelog, is_manual):
         """在主线程中处理更新检查结果"""
-        # download_url 可能是错误信息，只有在成功获取版本号时才认为是下载链接
         if latest_version and download_url and download_url.startswith("http"):
-            # 发现新版本
-            if messagebox.askyesno(
-                "发现新版本", 
-                f"发现新版本: {latest_version}\n当前版本: {VERSION}\n是否立即更新？"
-            ):
-                # 用户同意更新，执行 bat 脚本
+            body_text = changelog if changelog else "暂无更新说明"
+            prompt = (
+                f"发现新版本: {latest_version}\n"
+                f"当前版本: {VERSION}\n\n"
+                f"【更新内容】\n{body_text}\n\n"
+                f"是否立即更新？"
+            )
+            if messagebox.askyesno("发现新版本", prompt):
                 self.update_program(latest_version, download_url)
             elif is_manual:
                 messagebox.showinfo("更新提示", "您选择了暂不更新。")
         else:
-            # 无法获取或已是最新版本
             if is_manual:
                 messagebox.showinfo("更新提示", download_url)
             print(f"ℹ️ 版本检查结果: {download_url}")
@@ -1794,6 +1826,12 @@ class BatchCopyGUI(ctk.CTk):
     
     def on_closing(self):
         """窗口关闭事件处理"""
+        # 确保缓冲的日志被刷新
+        if hasattr(sys.stdout, 'flush'):
+            sys.stdout.flush()
+        # 处理剩余的队列消息
+        self._listen_queues()
+        
         if self.running:
             if messagebox.askyesno("确认", "当前正在处理文件，确定要退出吗？"):
                 self.stop_event.set()

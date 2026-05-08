@@ -10,3 +10,6 @@ exe/3D文件批量复制工具/
 # 打包生成的 ZIP 文件
 exe/3D文件批量复制工具.zip
 
+# Python 缓存目录
+__pycache__/
+
