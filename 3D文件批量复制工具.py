@@ -19,7 +19,7 @@ import requests
 import re
 
 # 版本和版权信息
-VERSION = "V1.2.4"
+VERSION = "V1.2.5"
 COPYRIGHT = "Tobin © 2026"
 PROJECT_URL = "https://github.com/caifugao110/3d-batch-copy"
 
@@ -92,6 +92,54 @@ def get_latest_version():
         import traceback
         print(traceback.format_exc())
         return None, None
+
+def get_update_logs(count=5):
+    """从Gitee Releases API获取最近count条更新记录"""
+    api_url = "https://gitee.com/api/v5/repos/caifugao110/3d-batch-copy/releases"
+    headers = {
+        "Authorization": "token a09da64c1d9e9c7420a18dfd838890b0"
+    }
+    try:
+        response = requests.get(api_url, headers=headers, timeout=5)
+        response.raise_for_status()
+        releases = response.json()
+        
+        version_pattern = re.compile(r'v?(\d+\.\d+\.\d+)', re.IGNORECASE)
+        updates = []
+        
+        for release in releases:
+            tag_name = release.get('tag_name', '')
+            match = version_pattern.search(tag_name)
+            if match:
+                version_str = match.group(1)
+                version_tuple = tuple(map(int, version_str.split('.')))
+                changelog = "暂无更新说明"
+                try:
+                    commit_url = f"https://gitee.com/api/v5/repos/caifugao110/3d-batch-copy/commits/{tag_name}"
+                    commit_resp = requests.get(commit_url, headers=headers, timeout=5)
+                    commit_resp.raise_for_status()
+                    commit_data = commit_resp.json()
+                    changelog = commit_data.get('commit', {}).get('message', '').strip() or "暂无更新说明"
+                except Exception as ce:
+                    body = release.get('body', '')
+                    match_info = re.search(r'最后提交信息为.*?[:：]\s*(.*)', body, re.DOTALL)
+                    if match_info:
+                        extracted = match_info.group(1).strip()
+                        if extracted:
+                            changelog = extracted
+                created_at = release.get('created_at', '')[:10] if release.get('created_at') else ''
+                updates.append({
+                    'version': tag_name,
+                    'changelog': changelog,
+                    'date': created_at
+                })
+        
+        updates.sort(key=lambda x: x['version'], reverse=True)
+        return updates[:count]
+        
+    except Exception as e:
+        print(f"⚠️ 获取更新日志失败: {str(e)}")
+        return []
 
 def compare_versions(current_version, latest_version):
     """比较版本号，返回True如果有新版本"""
@@ -236,6 +284,8 @@ echo.
 echo [5/5] 清理临时文件...
 rmdir /S /Q "!TEMP_EXTRACT_DIR!" 2>nul
 del "!TEMP_ZIP_PATH!" 2>nul
+echo 刷新图标缓存...
+ie4uinit.exe -show
 echo [完成] 临时文件已清理
 
 echo.
@@ -1001,6 +1051,90 @@ class ListManagerWindow(ctk.CTkToplevel):
         if messagebox.askyesno("确认", "确定要退出吗？未保存的更改将丢失。"):
             self.destroy()
 
+class UpdateLogWindow(ctk.CTkToplevel):
+    """更新日志窗口"""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("更新日志")
+        self.geometry("600x500")
+        
+        self.transient(parent)
+        self.grab_set()
+        
+        self._init_widgets()
+    
+    def _init_widgets(self):
+        main_frame = ctk.CTkFrame(self, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=15, pady=15)
+        
+        title_label = ctk.CTkLabel(
+            main_frame,
+            text="📝 更新日志",
+            font=("微软雅黑", 18, "bold")
+        )
+        title_label.pack(anchor="w", pady=(0, 15))
+        
+        self.log_textbox = ctk.CTkTextbox(
+            main_frame,
+            wrap="word",
+            font=("微软雅黑", 12),
+            state="disabled"
+        )
+        self.log_textbox.pack(fill="both", expand=True, pady=(0, 15))
+        
+        self.loading_label = ctk.CTkLabel(
+            main_frame,
+            text="正在获取更新日志...",
+            font=("微软雅黑", 12)
+        )
+        self.loading_label.pack()
+        
+        footer_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        footer_frame.pack(fill="x")
+        
+        ctk.CTkButton(
+            footer_frame,
+            text="关闭",
+            width=100,
+            font=("微软雅黑", 12),
+            command=self.destroy
+        ).pack(side="right")
+        
+        self._load_update_logs()
+    
+    def _load_update_logs(self):
+        def fetch_logs():
+            logs = get_update_logs(5)
+            self.after(0, lambda: self._display_logs(logs))
+        
+        threading.Thread(target=fetch_logs, daemon=True).start()
+    
+    def _display_logs(self, logs):
+        self.loading_label.pack_forget()
+        
+        self.log_textbox.configure(state="normal")
+        self.log_textbox.delete("1.0", "end")
+        
+        if not logs:
+            self.log_textbox.insert("end", "无法获取更新日志，请检查网络连接。")
+            self.log_textbox.configure(state="disabled")
+            return
+        
+        for idx, log in enumerate(logs, 1):
+            version = log.get('version', '')
+            date = log.get('date', '')
+            changelog = log.get('changelog', '')
+            
+            self.log_textbox.insert("end", f"【版本 {version}】")
+            if date:
+                self.log_textbox.insert("end", f" ({date})\n")
+            else:
+                self.log_textbox.insert("end", "\n")
+            self.log_textbox.insert("end", "=" * 50 + "\n")
+            self.log_textbox.insert("end", f"{changelog}\n\n")
+        
+        self.log_textbox.configure(state="disabled")
+
 class BatchCopyGUI(ctk.CTk):
     """3D文件批量复制GUI界面 - CustomTkinter 版本"""
     def __init__(self):
@@ -1135,6 +1269,17 @@ class BatchCopyGUI(ctk.CTk):
             command=self._check_update_manual
         )
         update_btn.pack(side="left", padx=5)
+        
+        # 更新日志按钮
+        changelog_btn = ctk.CTkButton(
+            info_frame,
+            text="📝 更新日志",
+            width=120,
+            height=30,
+            font=("微软雅黑", 12),
+            command=self._show_update_log
+        )
+        changelog_btn.pack(side="left", padx=5)
         
         # 主内容区
         content_frame = ctk.CTkFrame(main_container, fg_color="transparent")
@@ -1814,6 +1959,11 @@ class BatchCopyGUI(ctk.CTk):
             else:
                 messagebox.showwarning("警告", f"日志文件不存在: {log_file}")
     
+    def _show_update_log(self):
+        """显示更新日志窗口"""
+        update_log_window = UpdateLogWindow(self)
+        update_log_window.focus()
+
     def _clear_log(self):
         """清空日志文本框"""
         try:
