@@ -264,7 +264,7 @@ def check_for_updates():
         return None, "无法获取最新版本信息", None
 
     if compare_versions(VERSION, latest_version):
-        download_url = f"https://gitee.com/caifugao110/{PROJECT_NAME}/releases/download/{latest_version}/{PROJECT_NAME}.zip"
+        download_url = f"https://gitee.com/caifugao110/3d-batch-copy/releases/download/{latest_version}/3d-batch-copy.zip"
         return latest_version, download_url, changelog
     return None, "当前已是最新版本", None
 
@@ -282,8 +282,14 @@ def run_update_bat(download_url):
         return
 
     exe_name = f"{PROJECT_NAME}.exe"
-    bat_path = os.path.join(root_path, "update_script.bat")
     download_filename = download_url.split("/")[-1]
+    
+    is_unc_path = root_path.startswith("\\\\") or root_path.startswith("//")
+    
+    if is_unc_path:
+        bat_path = os.path.join(os.environ.get("TEMP", "C:\\Temp"), f"update_script_{os.getpid()}.bat")
+    else:
+        bat_path = os.path.join(root_path, "update_script.bat")
 
     bat_content = fr"""@echo off
 setlocal EnableDelayedExpansion
@@ -291,7 +297,12 @@ set "DOWNLOAD_URL={download_url}"
 set "EXE_NAME={exe_name}"
 set "ROOT_PATH={root_path}"
 set "TEMP_ZIP_NAME={download_filename}"
-set "TEMP_ZIP_PATH=!ROOT_PATH!\!TEMP_ZIP_NAME!"
+set "LOCAL_TEMP_DIR=%TEMP%\3d-batch-copy-update"
+set "TEMP_ZIP_PATH=!LOCAL_TEMP_DIR!\!TEMP_ZIP_NAME!"
+set "TEMP_EXTRACT_DIR=!LOCAL_TEMP_DIR!\temp_extract"
+
+mkdir "!LOCAL_TEMP_DIR!" 2>nul
+mkdir "!TEMP_EXTRACT_DIR!" 2>nul
 
 echo ========================================
 echo    {PROJECT_NAME} - 自动更新程序
@@ -319,7 +330,7 @@ echo [完成] 主程序已退出
 
 echo.
 echo [3/5] 正在解压更新文件...
-set "TEMP_EXTRACT_DIR=!ROOT_PATH!\temp_extract_!RANDOM!"
+rmdir /S /Q "!TEMP_EXTRACT_DIR!" 2>nul
 mkdir "!TEMP_EXTRACT_DIR!" 2>nul
 
 powershell.exe -Command "& {{ try {{ Expand-Archive -Path '!TEMP_ZIP_PATH!' -DestinationPath '!TEMP_EXTRACT_DIR!' -Force; exit 0; }} catch {{ Write-Error $_.Exception.Message; exit 1; }} }}"
@@ -374,6 +385,7 @@ echo.
 echo [5/5] 清理临时文件...
 rmdir /S /Q "!TEMP_EXTRACT_DIR!" 2>nul
 del "!TEMP_ZIP_PATH!" 2>nul
+rmdir /S /Q "!LOCAL_TEMP_DIR!" 2>nul
 echo 刷新图标缓存...
 ie4uinit.exe -show
 echo [完成] 临时文件已清理
