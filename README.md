@@ -200,14 +200,15 @@ SRTX-2C14700L
 > 如果你使用的是源码版本（非exe），可通过命令行运行：
 
 ```
-python 3D文件批量复制工具.py
+python app.py
 ```
+
+> `3D文件批量复制工具.py` 仍保留为兼容入口，也可以继续使用原命令启动。
 
 > 如果你想要将源码打包为exe文件，可通过命令行运行：
 
 ```
-# 用PyInstaller的文件夹模式，使得在线更新成为可能
-pyinstaller -D -w 3D文件批量复制工具.py
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1
 ```
 
 ---
@@ -272,3 +273,40 @@ pyinstaller -D -w 3D文件批量复制工具.py
 - 🐞 **报告Bug**：[GitHub Issues](https://github.com/caifugao110/3d-batch-copy/issues)
 - 💬 **功能建议**：欢迎提交 PR 或 Issue
 - 📧 **联系作者**：caifugao110@gmail.com
+
+---
+
+## 📄 许可证
+
+本项目采用 [MIT 许可证](LICENSE) 开源协议。
+
+```
+MIT License
+
+Copyright (c) 2026 Tobin
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+这意味着您可以自由地：
+- ✅ 使用、复制、修改、合并、出版发行、散布、再授权及贩售软件副本
+- ✅ 用于商业用途
+- ✅ 修改源代码
+
+唯一的要求是在所有副本或实质性部分中包含版权声明和许可声明。

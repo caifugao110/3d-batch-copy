@@ -1,0 +1,23 @@
+[project]
+name = "3d-batch-copy"
+version = "2.0.1"
+description = "A polished Python GUI tool for batch-copying 3D STEP/STP/XT files from local or network source directories."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Tobin" }]
+license = { text = "MIT" }
+dependencies = [
+    "ttkbootstrap>=1.10.1",
+    "requests>=2.31.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/caifugao110/3d-batch-copy"
+Repository = "https://github.com/caifugao110/3d-batch-copy"
+Documentation = "https://caifugao110.github.io/3d-batch-copy/"
+
+[project.scripts]
+3d-batch-copy = "app:main"
+
+[tool.setuptools]
+py-modules = ["app"]

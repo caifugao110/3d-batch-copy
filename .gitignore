@@ -1,15 +1,31 @@
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.pyo
+
+build/
+*.spec
+dist/
+
 # 复制输出目录
 copystep/
 
-# 复制列表文件
+# 复制日志
 Copy step list.csv
+*.log
+*.tmp
+*.bak
 
-# PyInstaller 打包输出目录
+# PyInstaller 打包输出
+exe/build/
+exe/dist/
 exe/3D文件批量复制工具/
-
-# 打包生成的 ZIP 文件
 exe/3D文件批量复制工具.zip
-
-# Python 缓存目录
-__pycache__/
+*.pkg
+*.toc
+*.pyz
+warn-*.txt
+xref-*.html
+localpycs/
 
