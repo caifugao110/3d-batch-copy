@@ -90,7 +90,6 @@ __homepage__ = PROJECT_METADATA["homepage"]
 VERSION = f"V{__version__}"
 COPYRIGHT = f"{__author__} © 2026"
 PROJECT_URL = __homepage__
-HELP_URL = "https://caifugao110.github.io/3d-batch-copy/"
 
 log_queue: queue.Queue[str] = queue.Queue()
 progress_queue: queue.Queue[tuple] = queue.Queue()
@@ -131,57 +130,6 @@ def center_window(window: tk.Toplevel, parent: tk.Misc, width: int, height: int)
     x = parent.winfo_rootx() + max((parent.winfo_width() - width) // 2, 0)
     y = parent.winfo_rooty() + max((parent.winfo_height() - height) // 2, 0)
     window.geometry(f"{width}x{height}+{x}+{y}")
-
-
-def get_latest_version():
-    """从Gitee Releases API获取最新版本号和更新内容。"""
-    api_url = "https://gitee.com/api/v5/repos/caifugao110/3d-batch-copy/releases"
-    headers = {
-        "Authorization": "token a09da64c1d9e9c7420a18dfd838890b0",
-    }
-    try:
-        response = requests.get(api_url, headers=headers, timeout=5)
-        response.raise_for_status()
-        releases = response.json()
-
-        version_pattern = re.compile(r"v?(\d+\.\d+\.\d+)", re.IGNORECASE)
-        versions = []
-
-        for release in releases:
-            tag_name = release.get("tag_name", "")
-            match = version_pattern.search(tag_name)
-            if match:
-                version_str = match.group(1)
-                version_tuple = tuple(map(int, version_str.split(".")))
-                changelog = "暂无更新说明"
-                try:
-                    commit_url = f"https://gitee.com/api/v5/repos/caifugao110/3d-batch-copy/commits/{tag_name}"
-                    commit_resp = requests.get(commit_url, headers=headers, timeout=5)
-                    commit_resp.raise_for_status()
-                    commit_data = commit_resp.json()
-                    changelog = commit_data.get("commit", {}).get("message", "").strip() or "暂无更新说明"
-                except Exception as ce:
-                    print(f"获取提交信息失败: {str(ce)}")
-                    body = release.get("body", "")
-                    match_info = re.search(r"最后提交信息为.*?[:：]\s*(.*)", body, re.DOTALL)
-                    if match_info:
-                        extracted = match_info.group(1).strip()
-                        if extracted:
-                            changelog = extracted
-                versions.append((version_tuple, tag_name, changelog))
-
-        if not versions:
-            return None, None
-
-        versions.sort(reverse=True, key=lambda x: x[0])
-        return versions[0][1], versions[0][2]
-
-    except Exception as e:
-        print(f"⚠️ 检查更新失败: {str(e)}")
-        import traceback
-
-        print(traceback.format_exc())
-        return None, None
 
 
 def get_update_logs(count=5):
@@ -234,186 +182,6 @@ def get_update_logs(count=5):
     except Exception as e:
         print(f"⚠️ 获取更新日志失败: {str(e)}")
         return []
-
-
-def compare_versions(current_version, latest_version):
-    """比较版本号，返回True如果有新版本。"""
-    try:
-        version_pattern = re.compile(r"v(\d+\.\d+\.\d+)", re.IGNORECASE)
-
-        current_match = version_pattern.search(current_version)
-        latest_match = version_pattern.search(latest_version)
-
-        if not current_match or not latest_match:
-            return False
-
-        current = tuple(map(int, current_match.group(1).split(".")))
-        latest = tuple(map(int, latest_match.group(1).split(".")))
-
-        return latest > current
-
-    except Exception as e:
-        print(f"⚠️ 版本比较失败: {str(e)}")
-        return False
-
-
-def check_for_updates():
-    """检查是否有更新。"""
-    latest_version, changelog = get_latest_version()
-    if not latest_version:
-        return None, "无法获取最新版本信息", None
-
-    if compare_versions(VERSION, latest_version):
-        download_url = f"https://gitee.com/caifugao110/3d-batch-copy/releases/download/{latest_version}/3d-batch-copy.zip"
-        return latest_version, download_url, changelog
-    return None, "当前已是最新版本", None
-
-
-def run_update_bat(download_url):
-    """创建并运行 bat 脚本进行更新和重启。"""
-    root_path = get_root_path()
-    is_in_ide = (
-        not hasattr(sys, "_MEIPASS")
-        and ("python.exe" in sys.executable.lower() or "pythonw.exe" in sys.executable.lower())
-    )
-
-    if is_in_ide:
-        messagebox.showwarning("更新提示", "从IDE运行时无法自动更新。请编译为exe后再使用更新功能，或手动下载更新包。")
-        return
-
-    exe_name = f"{PROJECT_NAME}.exe"
-    download_filename = download_url.split("/")[-1]
-    
-    is_unc_path = root_path.startswith("\\\\") or root_path.startswith("//")
-    
-    if is_unc_path:
-        bat_path = os.path.join(os.environ.get("TEMP", "C:\\Temp"), f"update_script_{os.getpid()}.bat")
-    else:
-        bat_path = os.path.join(root_path, "update_script.bat")
-
-    bat_content = fr"""@echo off
-setlocal EnableDelayedExpansion
-set "DOWNLOAD_URL={download_url}"
-set "EXE_NAME={exe_name}"
-set "ROOT_PATH={root_path}"
-set "TEMP_ZIP_NAME={download_filename}"
-set "LOCAL_TEMP_DIR=%TEMP%\3d-batch-copy-update"
-set "TEMP_ZIP_PATH=!LOCAL_TEMP_DIR!\!TEMP_ZIP_NAME!"
-set "TEMP_EXTRACT_DIR=!LOCAL_TEMP_DIR!\temp_extract"
-
-mkdir "!LOCAL_TEMP_DIR!" 2>nul
-mkdir "!TEMP_EXTRACT_DIR!" 2>nul
-
-echo ========================================
-echo    {PROJECT_NAME} - 自动更新程序
-echo ========================================
-echo.
-
-echo [1/5] 正在下载新版本压缩包...
-powershell.exe -Command "& {{ $ProgressPreference = 'SilentlyContinue'; try {{ Invoke-WebRequest -Uri '!DOWNLOAD_URL!' -OutFile '!TEMP_ZIP_PATH!' -UseBasicParsing; exit 0; }} catch {{ Write-Error $_.Exception.Message; exit 1; }} }}"
-if %errorlevel% neq 0 (
-    echo [错误] 下载失败，请检查网络连接
-    pause
-    exit /b 1
-)
-echo [完成] 下载成功
-
-echo.
-echo [2/5] 等待主程序退出...
-:WAIT_LOOP
-tasklist /FI "IMAGENAME eq !EXE_NAME!" 2>NUL | find /I /N "!EXE_NAME!">NUL
-if "%ERRORLEVEL%"=="0" (
-    timeout /t 1 /nobreak >nul
-    goto WAIT_LOOP
-)
-echo [完成] 主程序已退出
-
-echo.
-echo [3/5] 正在解压更新文件...
-rmdir /S /Q "!TEMP_EXTRACT_DIR!" 2>nul
-mkdir "!TEMP_EXTRACT_DIR!" 2>nul
-
-powershell.exe -Command "& {{ try {{ Expand-Archive -Path '!TEMP_ZIP_PATH!' -DestinationPath '!TEMP_EXTRACT_DIR!' -Force; exit 0; }} catch {{ Write-Error $_.Exception.Message; exit 1; }} }}"
-if %errorlevel% neq 0 (
-    echo [错误] 解压失败
-    pause
-    exit /b 1
-)
-echo [完成] 解压成功
-
-echo.
-echo [4/5] 正在复制更新文件...
-set "SOURCE_DIR="
-for /d %%d in ("!TEMP_EXTRACT_DIR!\*") do (
-    if exist "%%d\!EXE_NAME!" (
-        set "SOURCE_DIR=%%d"
-    )
-)
-if "!SOURCE_DIR!"=="" (
-    set "SOURCE_DIR=!TEMP_EXTRACT_DIR!"
-)
-
-echo 源目录: !SOURCE_DIR!
-echo 目标目录: !ROOT_PATH!
-echo.
-
-set "EXCLUDE_FILES="
-if exist "!ROOT_PATH!\config.ini" (
-    set "EXCLUDE_FILES=!EXCLUDE_FILES! config.ini"
-)
-if exist "!ROOT_PATH!\Original file list.txt" (
-    set "EXCLUDE_FILES=!EXCLUDE_FILES! "Original file list.txt""
-)
-
-set "ROBOCOPY_CMD=robocopy "!SOURCE_DIR!" "!ROOT_PATH!" /E /IS /IT /R:3 /W:2 /NFL /NDL /NJH /NJS"
-if not "!EXCLUDE_FILES!"=="" (
-    set "ROBOCOPY_CMD=!ROBOCOPY_CMD! /XF!EXCLUDE_FILES!"
-)
-set "ROBOCOPY_CMD=!ROBOCOPY_CMD! /XD "copystep""
-
-echo 执行命令: !ROBOCOPY_CMD!
-echo.
-
-!ROBOCOPY_CMD!
-if %errorlevel% leq 7 (
-    echo [完成] 文件复制成功
-) else (
-    echo [警告] 复制过程中可能有部分文件失败，错误代码: %errorlevel%
-)
-
-echo.
-echo [5/5] 清理临时文件...
-rmdir /S /Q "!TEMP_EXTRACT_DIR!" 2>nul
-del "!TEMP_ZIP_PATH!" 2>nul
-rmdir /S /Q "!LOCAL_TEMP_DIR!" 2>nul
-echo 刷新图标缓存...
-ie4uinit.exe -show
-echo [完成] 临时文件已清理
-
-echo.
-echo ========================================
-echo    更新完成，正在重启应用程序...
-echo ========================================
-start "" "!ROOT_PATH!\!EXE_NAME!"
-
-ping 127.0.0.1 -n 3 >nul
-del "%~f0" >nul 2>&1
-exit /b 0
-"""
-
-    try:
-        with open(bat_path, "w", encoding="gbk") as f:
-            f.write(bat_content)
-
-        subprocess.Popen(
-            ["cmd.exe", "/c", bat_path],
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
-            close_fds=True,
-        )
-        sys.exit(0)
-
-    except Exception as e:
-        messagebox.showerror("更新失败", f"无法创建或运行更新脚本: {str(e)}")
 
 
 def clean_filename(name):
@@ -1132,6 +900,70 @@ class UpdateLogWindow(ttk.Toplevel):
         self.log_textbox.configure(state="disabled")
 
 
+class HelpWindow(ttk.Toplevel):
+    """使用说明窗口 — 从 Gitee 加载 README.md 内容。"""
+
+    README_URL = "https://gitee.com/caifugao110/3d-batch-copy/raw/master/README.md"
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("使用说明")
+        self.geometry("780x620")
+        self.minsize(640, 480)
+
+        self.transient(parent)
+        self.grab_set()
+        center_window(self, parent, 780, 620)
+        self._build_ui()
+        self._load_readme()
+
+    def _build_ui(self):
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
+
+        header = ttk.Frame(self, padding=(16, 14, 16, 8))
+        header.grid(row=0, column=0, sticky="ew")
+        ttk.Label(header, text="使用说明", font=("Microsoft YaHei UI", 16, "bold")).pack(anchor="w")
+
+        body = ttk.Frame(self, padding=(16, 0, 16, 12))
+        body.grid(row=1, column=0, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        self.textbox = tk.Text(body, wrap="word", font=("Microsoft YaHei UI", 10), state="disabled", relief="solid")
+        self.textbox.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(body, orient=tk.VERTICAL, command=self.textbox.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.textbox.configure(yscrollcommand=scrollbar.set)
+
+        footer = ttk.Frame(self, padding=(16, 0, 16, 16))
+        footer.grid(row=2, column=0, sticky="ew")
+        self.loading_var = tk.StringVar(value="正在加载使用说明...")
+        ttk.Label(footer, textvariable=self.loading_var, bootstyle="secondary").pack(side=LEFT)
+        ttk.Button(footer, text="关闭", bootstyle="primary", command=self.destroy).pack(side=RIGHT)
+
+    def _load_readme(self):
+        def fetch():
+            try:
+                resp = requests.get(self.README_URL, timeout=10)
+                resp.raise_for_status()
+                content = resp.text
+            except Exception as e:
+                content = f"无法加载使用说明。\n\n错误信息: {str(e)}\n\n请访问项目主页查看: https://github.com/caifugao110/3d-batch-copy"
+            self.after(0, lambda: self._display_content(content))
+
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def _display_content(self, content):
+        if not self.winfo_exists():
+            return
+        self.loading_var.set("")
+        self.textbox.configure(state="normal")
+        self.textbox.delete("1.0", tk.END)
+        self.textbox.insert(tk.END, content)
+        self.textbox.configure(state="disabled")
+
+
 class BatchCopyApp(ttk.Window):
     """3D文件批量复制GUI界面。"""
 
@@ -1169,7 +1001,6 @@ class BatchCopyApp(ttk.Window):
         self._redirect_stdout()
         self._listen_queues()
         self.after(200, self._auto_load_files)
-        self.after(500, self.check_update_on_start)
 
     def _build_ui(self):
         self.columnconfigure(0, weight=1)
@@ -1199,10 +1030,7 @@ class BatchCopyApp(ttk.Window):
         ttk.Button(theme_bar, text="GitHub", bootstyle="secondary-outline", command=lambda: webbrowser.open(PROJECT_URL)).pack(
             side=LEFT, padx=(8, 0)
         )
-        ttk.Button(theme_bar, text="使用说明", bootstyle="secondary-outline", command=lambda: webbrowser.open(HELP_URL)).pack(
-            side=LEFT, padx=(8, 0)
-        )
-        ttk.Button(theme_bar, text="检查更新", bootstyle="secondary-outline", command=self._check_update_manual).pack(
+        ttk.Button(theme_bar, text="使用说明", bootstyle="secondary-outline", command=self._show_help).pack(
             side=LEFT, padx=(8, 0)
         )
         ttk.Button(theme_bar, text="更新日志", bootstyle="secondary-outline", command=self._show_update_log).pack(
@@ -1440,64 +1268,6 @@ class BatchCopyApp(ttk.Window):
         else:
             self.status_var.set("请选择配置文件")
 
-    def check_update_on_start(self):
-        threading.Thread(target=self._check_update_thread, args=(False,), daemon=True).start()
-
-    def _check_update_manual(self):
-        threading.Thread(target=self._check_update_thread, args=(True,), daemon=True).start()
-
-    def _check_update_thread(self, is_manual=False):
-        latest_version, download_url, changelog = check_for_updates()
-        self.after(0, lambda: self._handle_update_result(latest_version, download_url, changelog, is_manual))
-
-    def _handle_update_result(self, latest_version, download_url, changelog, is_manual):
-        if latest_version and download_url and download_url.startswith("http"):
-            body_text = changelog if changelog else "暂无更新说明"
-            prompt = (
-                f"发现新版本: {latest_version}\n"
-                f"当前版本: {VERSION}\n\n"
-                f"【更新内容】\n{body_text}\n\n"
-                f"是否立即更新？"
-            )
-            if messagebox.askyesno("发现新版本", prompt):
-                self.update_program(latest_version, download_url)
-            elif is_manual:
-                messagebox.showinfo("更新提示", "您选择了暂不更新。")
-        else:
-            if is_manual:
-                messagebox.showinfo("更新提示", download_url)
-            print(f"ℹ️ 版本检查结果: {download_url}")
-
-    def update_program(self, latest_version, download_url):
-        if sys.platform.startswith("win"):
-            update_window = ttk.Toplevel(self)
-            update_window.title("开始更新")
-            update_window.geometry("420x170")
-            update_window.resizable(False, False)
-            update_window.transient(self)
-            update_window.grab_set()
-            update_window.attributes("-topmost", True)
-            center_window(update_window, self, 420, 170)
-
-            container = ttk.Frame(update_window, padding=22)
-            container.pack(fill=BOTH, expand=YES)
-            ttk.Label(container, text="程序将退出并启动自动更新程序，请稍候...", wraplength=360, justify=LEFT).pack(
-                anchor="w", pady=(0, 18)
-            )
-            ttk.Progressbar(container, mode="indeterminate").pack(fill=X)
-            for child in container.winfo_children():
-                if isinstance(child, ttk.Progressbar):
-                    child.start(12)
-
-            def close_and_update():
-                update_window.destroy()
-                run_update_bat(download_url)
-
-            update_window.after(2000, close_and_update)
-        else:
-            if messagebox.askyesno("更新提示", f"非 Windows 系统，无法自动更新。\n最新版本: {latest_version}\n是否打开下载页面手动下载？"):
-                webbrowser.open(PROJECT_URL)
-
     def _select_config(self):
         file_path = filedialog.askopenfilename(title="选择配置文件", filetypes=[("INI文件", "*.ini"), ("所有文件", "*.*")])
 
@@ -1674,6 +1444,10 @@ class BatchCopyApp(ttk.Window):
     def _show_update_log(self):
         update_log_window = UpdateLogWindow(self)
         update_log_window.focus()
+
+    def _show_help(self):
+        help_window = HelpWindow(self)
+        help_window.focus()
 
     def _clear_log(self):
         try:

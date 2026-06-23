@@ -1,0 +1,91 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version from pyproject.toml
+        id: version
+        shell: pwsh
+        run: |
+          $content = Get-Content -Raw pyproject.toml
+          if ($content -match 'version\s*=\s*"([^"]+)"') {
+            $version = $matches[1]
+            echo "version=$version" >> $env:GITHUB_OUTPUT
+            echo "tag=V$version" >> $env:GITHUB_OUTPUT
+            Write-Host "Version=$version, Tag=V$version"
+          } else {
+            throw "Cannot parse version from pyproject.toml"
+          }
+
+      - name: Create and push tag
+        shell: pwsh
+        run: |
+          $tag = "V${{ steps.version.outputs.version }}"
+          if (git tag -l $tag) {
+            Write-Host "Tag $tag already exists, skip."
+            exit 0
+          }
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag -a $tag -m "Release V${{ steps.version.outputs.version }}"
+          git push origin $tag
+          Write-Host "Tag $tag created and pushed."
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build exe with PyInstaller
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --onefile `
+            --windowed `
+            --name "3d-batch-copy" `
+            --icon ".\assets\app.ico" `
+            --add-data ".\assets;assets" `
+            --add-data ".\pyproject.toml;." `
+            ".\app.py"
+
+      - name: Verify build
+        shell: pwsh
+        run: |
+          if (-not (Test-Path ".\dist\3d-batch-copy.exe")) {
+            throw "Build did not produce dist\3d-batch-copy.exe"
+          }
+
+      - name: Create Release and Upload
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "V${{ steps.version.outputs.version }}"
+          name: "3d-batch-copy V${{ steps.version.outputs.version }}"
+          body: |
+            3d-batch-copy V${{ steps.version.outputs.version }}
+
+            - 单文件便携 exe，无需安装 Python 即可运行
+            - 自动构建于 GitHub Actions
+          files: dist/3d-batch-copy.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

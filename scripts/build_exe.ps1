@@ -50,7 +50,7 @@ try {
     & ".\.venv\Scripts\pyinstaller.exe" `
         --noconfirm `
         --clean `
-        --onedir `
+        --onefile `
         --windowed `
         --name $AppName `
         --icon ".\assets\app.ico" `
@@ -60,43 +60,12 @@ try {
         --add-data ".\pyproject.toml;." `
         ".\app.py"
 
-    $TargetDir = Join-Path $Root "dist\$AppName"
-    if (-not (Test-Path -LiteralPath (Join-Path $TargetDir "$AppName.exe"))) {
-        throw "Build did not produce $TargetDir\$AppName.exe"
+    $ExePath = Join-Path $Root "dist\$AppName.exe"
+    if (-not (Test-Path -LiteralPath $ExePath)) {
+        throw "Build did not produce $ExePath"
     }
 
-    if (Test-Path ".\config.ini") {
-        Copy-Item -LiteralPath ".\config.ini" -Destination $TargetDir -Force
-    }
-    if (Test-Path ".\Original file list.txt") {
-        Copy-Item -LiteralPath ".\Original file list.txt" -Destination $TargetDir -Force
-    }
-
-    $ZipPath = Join-Path $Root "dist\$AppName.zip"
-    if (Test-Path -LiteralPath $ZipPath) {
-        Remove-Item -LiteralPath $ZipPath -Force
-    }
-
-    $maxRetries = 5
-    $retryDelay = 2
-    for ($i = 1; $i -le $maxRetries; $i++) {
-        try {
-            Compress-Archive -Path (Join-Path $TargetDir "*") -DestinationPath $ZipPath -Force
-            break
-        }
-        catch {
-            if ($i -lt $maxRetries) {
-                Write-Host "Compression failed, retrying in $retryDelay seconds... ($i/$maxRetries)"
-                Start-Sleep -Seconds $retryDelay
-            }
-            else {
-                throw
-            }
-        }
-    }
-
-    Write-Host "Build complete: $TargetDir"
-    Write-Host "Zip complete: $ZipPath"
+    Write-Host "Build complete: $ExePath"
 }
 finally {
     Clear-BuildArtifacts
